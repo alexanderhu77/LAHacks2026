@@ -9,7 +9,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -18,15 +18,30 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+import com.lahacks2026.pretriage.data.InsurancePlan
+import com.lahacks2026.pretriage.data.DemoScenario
+import androidx.compose.material.icons.filled.Phone
+
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.Lock
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ResultScreen(
+    plan: InsurancePlan,
+    scenario: DemoScenario?,
     onNavigateBack: () -> Unit
 ) {
-    // Mocking a result for UI design
-    val severity = "Urgent Care Today"
-    val severityColor = Color(0xFFE67E22) // Orange-ish
-    val reasoning = "Based on your description of a sharp pain in your chest that radiates to your arm, we recommend visiting Urgent Care for an immediate evaluation. This ensures your symptoms are monitored by a professional."
+    // Determine content from scenario or use defaults
+    val severity = scenario?.severity ?: "Urgent Care Today"
+    val reasoning = scenario?.reasoning ?: "Based on your description, we recommend visiting Urgent Care for an immediate evaluation."
+    
+    val isEmergency = severity.contains("EMERGENCY", ignoreCase = true)
+    val severityColor = if (isEmergency) MaterialTheme.colorScheme.error else Color(0xFFE67E22)
+    val severityIcon = if (isEmergency) Icons.Default.Warning else Icons.Default.Warning
+
+    var showDeidFlow by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -60,7 +75,7 @@ fun ResultScreen(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Icon(
-                        Icons.Default.Warning,
+                        severityIcon,
                         contentDescription = null,
                         tint = severityColor,
                         modifier = Modifier.size(48.dp)
@@ -91,29 +106,78 @@ fun ResultScreen(
 
             Divider(modifier = Modifier.padding(vertical = 8.dp))
 
-            // Action Card (Insurance Routed)
+            // Action Card (Insurance Routed or Emergency)
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                    containerColor = if (isEmergency) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
                 )
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        "Recommended Action",
+                        if (isEmergency) "IMMEDIATE ACTION REQUIRED" else "Recommended Action (${plan.plan_name})",
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        color = if (isEmergency) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer
                     )
                     Text(
-                        "Visit 'City Health Urgent Care' (In-network). Your copay is $20.",
-                        style = MaterialTheme.typography.bodyMedium
+                        if (isEmergency) "Call 911 or visit the nearest Emergency Room immediately." 
+                        else "Visit '${plan.urgent_care.provider}' (${plan.urgent_care.distance}). Your copay is $${plan.urgent_care.copay}.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (isEmergency) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Button(
-                        onClick = { /* TODO: Open Maps */ },
-                        modifier = Modifier.fillMaxWidth()
+                        onClick = { /* TODO: Dialer or Maps */ },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = if (isEmergency) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error) else ButtonDefaults.buttonColors()
                     ) {
-                        Text("Open Directions")
+                        if (isEmergency) {
+                            Icon(Icons.Default.Phone, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("CALL 911 NOW")
+                        } else {
+                            Text("Open Directions")
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // De-identification Escalation
+            OutlinedCard(
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Secure Escalation", style = MaterialTheme.typography.titleSmall)
+                    }
+                    Text(
+                        "Need to share records with a doctor? Our privacy loop scrubs your identity on-device before sending.",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
+                    
+                    if (!showDeidFlow) {
+                        Button(
+                            onClick = { showDeidFlow = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                        ) {
+                            Icon(Icons.Default.FileUpload, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Share De-identified Records")
+                        }
+                    } else {
+                        // Simulated De-id Progress
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            Text("Anonymizing [PATIENT_NAME]...", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
+                            Text("Sent securely to provider.", color = Color(0xFF27AE60), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }

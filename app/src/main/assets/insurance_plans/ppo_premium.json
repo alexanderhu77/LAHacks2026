@@ -1,0 +1,17 @@
+{
+  "plan_name": "BlueShield PPO Premium",
+  "telehealth": {
+    "provider": "Teladoc Health",
+    "copay": 0,
+    "url": "https://teladoc.com/launch"
+  },
+  "urgent_care": {
+    "provider": "City Health Urgent Care",
+    "copay": 20,
+    "distance": "1.2 miles"
+  },
+  "emergency": {
+    "copay": 250,
+    "note": "Waived if admitted"
+  }
+}

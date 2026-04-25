@@ -1,0 +1,17 @@
+{
+  "plan_name": "Kaiser HMO Basic",
+  "telehealth": {
+    "provider": "KP Video Visit",
+    "copay": 15,
+    "url": "https://kp.org/video-visit"
+  },
+  "urgent_care": {
+    "provider": "Kaiser Permanente Urgent Care",
+    "copay": 50,
+    "distance": "4.5 miles"
+  },
+  "emergency": {
+    "copay": 500,
+    "note": "Pre-authorization required for non-emergency"
+  }
+}
