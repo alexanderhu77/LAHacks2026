@@ -1,0 +1,12 @@
+{
+  "id": "hmo",
+  "name": "Kaiser Silver HMO",
+  "telehealthDeepLink": "https://kp.org/mydoctor/visit?plan=hmo",
+  "urgentCareNetworkQuery": "Kaiser urgent care",
+  "copayBySeverity": {
+    "SELF_CARE": 0,
+    "TELEHEALTH": 15,
+    "URGENT_CARE": 50,
+    "EMERGENCY": 250
+  }
+}

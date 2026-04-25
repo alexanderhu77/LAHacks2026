@@ -1,0 +1,12 @@
+{
+  "id": "basic",
+  "name": "Basic Bronze HMO",
+  "telehealthDeepLink": "https://teladoc.com/visit?plan=basic",
+  "urgentCareNetworkQuery": "in-network urgent care basic HMO",
+  "copayBySeverity": {
+    "SELF_CARE": 0,
+    "TELEHEALTH": 25,
+    "URGENT_CARE": 75,
+    "EMERGENCY": 350
+  }
+}
