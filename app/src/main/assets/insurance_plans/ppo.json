@@ -1,0 +1,12 @@
+{
+  "id": "ppo",
+  "name": "Anthem Gold PPO",
+  "telehealthDeepLink": "https://livehealthonline.com/visit?plan=ppo",
+  "urgentCareNetworkQuery": "in-network urgent care Anthem PPO",
+  "copayBySeverity": {
+    "SELF_CARE": 0,
+    "TELEHEALTH": 10,
+    "URGENT_CARE": 40,
+    "EMERGENCY": 200
+  }
+}
