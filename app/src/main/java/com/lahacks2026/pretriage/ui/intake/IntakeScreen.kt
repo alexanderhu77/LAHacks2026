@@ -24,7 +24,8 @@ import com.lahacks2026.pretriage.data.DemoScenarios
 @Composable
 fun IntakeScreen(
     onNavigateToCamera: (DemoScenario?) -> Unit,
-    onNavigateToResult: (DemoScenario?) -> Unit
+    onNavigateToResult: (DemoScenario?) -> Unit,
+    onNavigateToDiagnostics: () -> Unit = {}
 ) {
     var symptomText by remember { mutableStateOf("") }
     var currentScenario by remember { mutableStateOf<DemoScenario?>(null) }
@@ -184,6 +185,14 @@ fun IntakeScreen(
                     style = MaterialTheme.typography.labelSmall,
                     textAlign = TextAlign.Center,
                     color = MaterialTheme.colorScheme.onErrorContainer
+                )
+            }
+
+            TextButton(onClick = onNavigateToDiagnostics) {
+                Text(
+                    "Diagnostics: Run Melange Test",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }

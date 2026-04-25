@@ -12,6 +12,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.compose.ui.platform.LocalContext
 import com.lahacks2026.pretriage.data.*
 import com.lahacks2026.pretriage.ui.camera.CameraScreen
+import com.lahacks2026.pretriage.ui.diagnostics.SmokeTestScreen
 import com.lahacks2026.pretriage.ui.intake.IntakeScreen
 import com.lahacks2026.pretriage.ui.result.ResultScreen
 
@@ -19,6 +20,7 @@ sealed class Screen(val route: String) {
     object Intake : Screen("intake")
     object Camera : Screen("camera")
     object Result : Screen("result")
+    object Diagnostics : Screen("diagnostics")
 }
 
 @Composable
@@ -47,7 +49,8 @@ fun PreTriageNavGraph(
                 onNavigateToResult = { scenario ->
                     currentScenario = scenario
                     navController.navigate(Screen.Result.route)
-                }
+                },
+                onNavigateToDiagnostics = { navController.navigate(Screen.Diagnostics.route) }
             )
         }
         composable(Screen.Camera.route) {
@@ -60,10 +63,15 @@ fun PreTriageNavGraph(
             ResultScreen(
                 plan = mockPlan,
                 scenario = currentScenario,
-                onNavigateBack = { 
+                onNavigateBack = {
                     currentScenario = null
-                    navController.popBackStack(Screen.Intake.route, inclusive = false) 
+                    navController.popBackStack(Screen.Intake.route, inclusive = false)
                 }
+            )
+        }
+        composable(Screen.Diagnostics.route) {
+            SmokeTestScreen(
+                onNavigateBack = { navController.popBackStack() }
             )
         }
     }
