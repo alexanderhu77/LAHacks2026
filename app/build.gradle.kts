@@ -88,6 +88,15 @@ dependencies {
     // JSON (insurance plans, demo scenarios, MedGemma output parsing)
     implementation("com.google.code.gson:gson:2.10.1")
 
+    // CameraX
+    val cameraxVersion = "1.3.2"
+    implementation("androidx.camera:camera-camera2:$cameraxVersion")
+    implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
+    implementation("androidx.camera:camera-view:$cameraxVersion")
+
+    // Permissions
+    implementation("com.google.accompanist:accompanist-permissions:0.34.0")
+
     // Unit testing
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
