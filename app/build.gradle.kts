@@ -77,6 +77,9 @@ dependencies {
 
     // Zetic MLange SDK — on-device model runtime
     implementation("com.zeticai.mlange:mlange:1.6.1")
+    // Zetic ext — companion package containing pipeline helpers (WhisperWrapper, YOLOv8 wrappers, etc.)
+    // Required because Whisper mel-spectrogram + BPE detokenization helpers were never in :mlange itself.
+    implementation("com.zeticai.ext:ext:0.0.1")
 
     // Lifecycle + ViewModel
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
