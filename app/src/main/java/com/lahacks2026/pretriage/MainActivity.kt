@@ -32,6 +32,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+import com.lahacks2026.pretriage.ui.PreTriageNavGraph
+
 private const val SMOKE_MODEL_ID = "Qwen/Qwen3-4B"
 private const val SMOKE_PROMPT = "What is the capital of France? Answer in one sentence."
 
@@ -40,8 +42,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    SmokeTestScreen()
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    PreTriageNavGraph()
                 }
             }
         }
