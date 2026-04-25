@@ -9,7 +9,7 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.google.gson.Gson
+import androidx.compose.ui.platform.LocalContext
 import com.lahacks2026.pretriage.data.*
 import com.lahacks2026.pretriage.ui.camera.CameraScreen
 import com.lahacks2026.pretriage.ui.intake.IntakeScreen
@@ -25,17 +25,13 @@ sealed class Screen(val route: String) {
 fun PreTriageNavGraph(
     navController: NavHostController = rememberNavController()
 ) {
+    val context = LocalContext.current
     // Shared state for the demo
     var currentScenario by remember { mutableStateOf<DemoScenario?>(null) }
     
-    // Mock the current plan
+    // Load Alex's mock plan for the UI/UX demo
     val mockPlan = remember {
-        InsurancePlan(
-            plan_name = "BlueShield PPO Premium",
-            telehealth = TelehealthInfo("Teladoc Health", 0, "https://teladoc.com"),
-            urgent_care = ProviderInfo("City Health Urgent Care", 20, "1.2 miles"),
-            emergency = EmergencyInfo(250, "Waived if admitted")
-        )
+        InsurancePlanLoader.load(context, "ppo")
     }
 
     NavHost(
