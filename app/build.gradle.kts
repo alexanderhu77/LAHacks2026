@@ -57,6 +57,9 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            // ext:0.0.1 and mlange-core:0.0.14 both ship libc++_shared.so per ABI;
+            // pickFirsts tells the merger to keep one and drop the duplicate.
+            pickFirsts += "lib/**/libc++_shared.so"
         }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
