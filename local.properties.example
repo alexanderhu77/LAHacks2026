@@ -1,0 +1,9 @@
+# Copy this file to `local.properties` and fill in values.
+# `local.properties` is gitignored — never commit your token.
+
+# Path to your Android SDK (Android Studio sets this automatically on first sync)
+# sdk.dir=/Users/you/Library/Android/sdk
+
+# Personal access token from https://mlange.zetic.ai (Settings -> Personal Access Token)
+# Required for the Melange smoke test on the home screen.
+MELANGE_TOKEN=
