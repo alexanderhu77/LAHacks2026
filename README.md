@@ -18,12 +18,14 @@ If the build fails on Gradle sync, let it download Gradle 8.5 and the Android SD
 
 ## Team split
 
-| Person | Owns | Package |
-|---|---|---|
-| A | Melange wrappers, model lifecycle, warmup, streaming | `ml/` |
-| B | Compose screens + ViewModels (intake, camera, result) | `ui/intake/`, `ui/camera/`, `ui/result/` |
-| C | tanaos integration, Keystore token map, regex anonymizer fallback | `privacy/` |
-| D | System prompts, JSON schema, regex emergency short-circuit, demo polish | `triage/` |
+Two roles, two people each. **No vertical ownership within either pair.**
+
+| Role | People | Owns | Packages |
+|---|---|---|---|
+| Backend (Macs) | 2, fungible | ML runtime, prompts, schema, anonymizer, Keystore, mock telehealth, orchestrator, fakes | `ml/`, `privacy/`, `triage/`, `data/` |
+| Frontend (Windows + phones) | 2, fungible | All Compose UI + on-device validation of every backend push + cold-start profiling + demo phone stewardship | `ui/intake/`, `ui/camera/`, `ui/result/`, splash, de-id upload |
+
+**Workflow:** push directly to `main` (no PRs). Run `./gradlew assembleDebug` before every push. Post a one-liner in Slack `#pushes`. Windows devs pull, install via `adb install -r`, and validate within ~20 minutes. Break main → fix-forward or revert in 15.
 
 See **[HACKATHON_PLAN.md](./HACKATHON_PLAN.md)** for architecture, performance targets, screen flow, definition-of-done per area, and the demo script.
 

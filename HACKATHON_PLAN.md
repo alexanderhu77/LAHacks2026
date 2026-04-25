@@ -45,7 +45,7 @@ On-device doesn't mean free. The phone is the server. Treat it that way.
 - **Resize images to 768px max edge** before passing to MedGemma. Do not send full-resolution camera bitmaps.
 - **All inference on `Dispatchers.IO`**, never on the main thread. UI updates via `StateFlow`.
 - **Stream tokens to the UI** so perceived latency stays low even when generation is slow.
-- **Profile cold-start time and RAM by hour 12, not hour 30.** Person A owns this. If we're over budget, drop to a smaller MedGemma variant before we keep building features.
+- **Profile cold-start time and RAM by hour 6, not hour 30.** A Windows dev (phone in hand) owns this. If we're over budget, drop to a smaller MedGemma variant before we keep building features.
 
 ## Three on-device models
 
@@ -82,26 +82,57 @@ interface TriageService {
 - The mock telehealth endpoint receives only de-identified text. If you find yourself logging the original payload anywhere, delete that log line immediately.
 - Regex emergency short-circuit (chest pain / stroke / severe bleeding / breathing trouble) runs **before** any LLM call. It's a safety floor that doesn't depend on the model behaving.
 
-## Team split
+## Team split — backend Macs, frontend Windows
 
-| Person | Owns | Package | Definition of Done |
-|---|---|---|---|
-| **A** | ML orchestration, Melange wrappers, model lifecycle | `ml/` | Singleton `MelangeRuntime` loads MedGemma + Whisper + anonymizer at app start with progress callbacks; warmup with dummy inference on splash; streaming token API; cold-start metric logged. |
-| **B** | UI screens + ViewModels | `ui/intake/`, `ui/camera/`, `ui/result/` | Intake (voice button + text field), Camera (CameraX + quality precheck for blur/luminance), Result (severity badge + reasoning + one-tap action button wired to intent / dialer / map / deep link). Compose Navigation between them. |
-| **C** | De-id loop, Keystore | `privacy/` | `Anonymizer` (tanaos) + `RegexAnonymizer` fallback behind one interface; deterministic placeholder tokens; Keystore-backed token map; re-id pass on incoming response payload; mock telehealth Ktor endpoint that echoes payload to prove round-trip. |
-| **D** | Prompts, schema, demo polish | `triage/` | MedGemma system prompt (capped, JSON-output-only); strict schema parser with confidence-floor handling (<0.6 → conservative routing); regex emergency short-circuit; the three demo scenarios scripted and timed; pitch script. |
+Two roles, two people each. **No vertical ownership within either pair** — both Macs may touch any backend file; both Windows devs may touch any UI screen. Disjoint package sets between the pairs keep cross-pair conflicts rare.
 
-Each person works `feat/<area>` branches; `main` is demo-ready at all times. PR review = one teammate skim, then merge. Don't sit on PRs.
+### Backend Macs (2 people, fungible)
 
-## Risk register (top 5)
+Own everything that isn't a Compose screen: `ml/`, `privacy/`, `triage/`, `data/`. Pull tasks off a shared queue (pinned Slack thread) — whoever is free grabs the next one.
+
+**Definition of Done across the backend, by area:**
+
+| Area | Package | DoD |
+|---|---|---|
+| ML runtime | `ml/` | Singleton `MelangeRuntime` loads MedGemma + Whisper + anonymizer at app start with progress callbacks; warmup with dummy inference on splash; streaming token API; cold-start metric logged. |
+| Privacy / de-id | `privacy/` | `Anonymizer` (tanaos) + `RegexAnonymizer` fallback behind one interface; deterministic placeholder tokens; Keystore-backed token map; re-id pass on incoming response payload; mock telehealth Ktor endpoint that echoes payload to prove round-trip. |
+| Triage logic | `triage/` | MedGemma system prompt (capped, JSON-output-only); strict schema parser with confidence-floor handling (<0.6 → conservative routing); regex emergency short-circuit; the three demo scenarios scripted and timed; pitch script. |
+| Data | `data/` | Bundled insurance plan JSON loader; demo scenario JSON loader; in-memory session models. |
+
+**Pair-program** for the 2-3 hardest stretches: (1) MedGemma prompt + schema convergence, (2) de-id ↔ re-id round-trip, (3) demo-day debugging. Otherwise work solo on different files.
+
+### Frontend Windows (2 people, fungible)
+
+Own the Compose UI: `ui/intake/`, `ui/camera/`, `ui/result/`, splash, de-id doc upload screen. Layout, theming, navigation, button intents, animation, copy. **This is real development work, not just testing.** The inner loop for UI is "edit Compose → install on phone → tap → adjust" — that loop is fastest in the hands of someone holding the phone.
+
+**Definition of Done across the UI:**
+
+| Screen | DoD |
+|---|---|
+| Splash | Warmup of all three models with progress UI; advances to Intake when all three are warm. |
+| Intake | Text field + voice button (Whisper start/stop); RECORD_AUDIO permission flow; transcript handed to `TriageOrchestrator`. |
+| Camera | CameraX preview + capture; blur/luminance precheck on captured frame; "retake" flow if quality fails; resized bitmap (768px max edge) handed to orchestrator. |
+| Result | Severity badge + reasoning text + red-flags list + one-tap action button wired to intent (911 dialer / telehealth deep link / maps query / self-care text). |
+| De-id Doc Upload | Photo capture → MedGemma extraction (via interface) → tanaos scrub → POST → re-id pass → render result. |
+| Navigation | Compose Navigation between all screens; back-stack handling. |
+
+**Also own** — phone-coupled tasks that genuinely require hardware: cold-start profiling on the demo device (by hour 6, posted as a number not a guess); demo phone stewardship from hour 24 onward (clean install, pre-cached models, read-only for dev installs after the freeze).
+
+**Also serve as on-device validators** for backend pushes — when a Mac pushes ML/privacy/triage code, a Windows dev pulls latest `main`, builds, and runs the relevant flow within ~20 minutes. No PR review needed; just verify it didn't break the demo path. Until that confirmation, the feature isn't done.
+
+## Risk register
 
 | Risk | Trigger | Mitigation |
 |---|---|---|
 | Model download fails or auth-errors mid-demo | Bad token, network blip, catalog change | Pre-download all three models on the demo phone the night before. Cache lives in app sandbox; don't clear data. |
 | NPU OOM when loading MedGemma + Whisper + anonymizer | Concurrent load on a 6 GB device | Load sequentially in splash; if heap pressure, free Whisper after transcription before MedGemma run. |
-| Cold-start > 6 s | First-token latency on cold MedGemma | Warmup dummy inference in splash; if still over budget, drop to a smaller MedGemma variant by hour 12. |
+| Cold-start > 6 s | First-token latency on cold MedGemma | Warmup dummy inference in splash; profile by hour 6 (Windows dev with phone); if over budget, drop to a smaller MedGemma variant immediately. |
 | Audio permission denied on demo phone | User taps "Don't allow" | Always allow text input as the primary path. Voice is a bonus, not a dependency. |
-| Phone thermal-throttles during pitch | Back-to-back inferences on a hot SoC | Have a second demo phone in the bag, charged and cool. Run scenarios from a script with 30 s of breathing room. |
+| Phone thermal-throttles during pitch | Back-to-back inferences on a hot SoC | Backup phone primed and cool; run scenarios from script with 30 s breathing room. |
+| Two devs push to `main` and conflict | Direct-to-main workflow without PRs | Disjoint package ownership (backend vs `ui/`) keeps cross-pair conflicts rare. `git pull --rebase` before every change. `assembleDebug` gate before push. 15-min fix-forward-or-revert rule. |
+| Backend interface change breaks UI integration | Mac dev rev's a service signature | Heads-up in Slack `#pushes` *before* the breaking push. UI works against `FakeMelangeRuntime` so it stays decoupled from real-model availability. |
+| UI great on dev phone, broken on demo phone (different SoC / screen) | Hardware divergence | Run the full demo on the demo phone at hour 24 *before* freezing it; fix on dev phone first then refresh. |
+| Mac dev needs to test on a phone | No phone in hand | Hand them a phone for 30 minutes. Don't grind on remote screencaps. |
 
 ## Demo script (3 stories, ~75 s each)
 
@@ -119,9 +150,29 @@ After story 3, do the de-id story: photograph a fake lab report, show the placeh
 - iOS. Android only.
 - Persistent history. Sessions die with the activity.
 
-## Branching & merge etiquette
+## Workflow — push to main, no PRs
 
-- `main` is demo-ready at all times. If you break it, you're on the hook to revert within 15 minutes.
-- Branch off `main` as `feat/<area>-<short-desc>`.
-- Open a PR even for solo work — it's the merge log we'll point judges at.
-- Squash-merge. Commit message format: `<area>: <verb> <thing>` (e.g., `triage: add emergency short-circuit regex`).
+Everyone pushes directly to `main`. No `feat/*` branches. No PR review. The team is small enough that PR ceremony adds friction without catching real bugs, and we don't want anyone learning GitHub PR mechanics under hackathon pressure.
+
+**The loop, every time you change code:**
+
+1. `git pull --rebase`
+2. Make the change.
+3. `./gradlew assembleDebug` — confirm it still compiles. **No exceptions.** This is the only gate keeping `main` green.
+4. `git push`
+5. Post a one-line note in Slack `#pushes`: `pushed: <what changed, one sentence>`.
+
+**On-device validation (Windows devs):**
+
+1. Pull latest `main`.
+2. `./gradlew installDebug` (or `adb install -r app/build/outputs/apk/debug/app-debug.apk`).
+3. Run the relevant flow.
+4. Reply in the same Slack thread: thumbs-up, or `broken: <log snippet>`.
+
+**If you break `main`, you have 15 minutes to fix-forward or revert.** The `#pushes` channel makes breakage immediately visible. If you can't fix in 15, revert and reopen the change locally.
+
+**Standup every 4 hours, 5 minutes max.** Show what's broken, not what's working.
+
+**Commit message format:** `<area>: <verb> <thing>` — e.g., `triage: add emergency short-circuit regex`, `ui/intake: wire voice button to whisper`.
+
+**Conflict avoidance:** Mac and Windows pairs own disjoint packages (backend vs `ui/`), so cross-pair collisions are rare. Within a pair, the task queue prevents two people grabbing the same task; if you both need to touch the same file, pair-program for that stretch instead of racing.
