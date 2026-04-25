@@ -34,7 +34,7 @@ fun IntakeScreen(
     if (showDemoPicker) {
         AlertDialog(
             onDismissRequest = { showDemoPicker = false },
-            title = { Text("Select Demo Scenario") },
+            title = { Text("Select Scenario") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     DemoScenarios.All.forEach { scenario ->
