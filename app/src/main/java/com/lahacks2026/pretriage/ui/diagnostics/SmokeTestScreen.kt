@@ -42,7 +42,7 @@ import kotlinx.coroutines.withContext
 
 private const val TAG = "MelangeSmoke"
 
-private const val SMOKE_MODEL_ID = "zetic-ai/qwen2.5-0.5b-instruct" // Switched to 0.5B model to save bandwidth
+private const val SMOKE_MODEL_ID = "Steve/Qwen3.5-2B" // Reverting to official model ID
 private const val SMOKE_PROMPT = "What is the capital of France? Answer in one sentence."
 
 private sealed interface SmokeState {
