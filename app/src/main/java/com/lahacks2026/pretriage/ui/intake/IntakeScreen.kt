@@ -17,18 +17,54 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+import com.lahacks2026.pretriage.data.DemoScenario
+import com.lahacks2026.pretriage.data.DemoScenarios
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun IntakeScreen(
-    onNavigateToCamera: () -> Unit,
-    onNavigateToResult: () -> Unit
+    onNavigateToCamera: (DemoScenario?) -> Unit,
+    onNavigateToResult: (DemoScenario?) -> Unit
 ) {
     var symptomText by remember { mutableStateOf("") }
+    var currentScenario by remember { mutableStateOf<DemoScenario?>(null) }
+    var showDemoPicker by remember { mutableStateOf(false) }
+
+    if (showDemoPicker) {
+        AlertDialog(
+            onDismissRequest = { showDemoPicker = false },
+            title = { Text("Select Demo Scenario") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DemoScenarios.All.forEach { scenario ->
+                        OutlinedButton(
+                            onClick = {
+                                symptomText = scenario.initialSymptom
+                                currentScenario = scenario
+                                showDemoPicker = false
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(scenario.title)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showDemoPicker = false }) { Text("Cancel") }
+            }
+        )
+    }
 
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
                 title = { Text("Pre-Triage Co-Pilot", fontWeight = FontWeight.Bold) },
+                actions = {
+                    IconButton(onClick = { showDemoPicker = true }) {
+                        Icon(Icons.Default.Security, contentDescription = "Demo Mode", tint = MaterialTheme.colorScheme.primary)
+                    }
+                },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
                     titleContentColor = MaterialTheme.colorScheme.onPrimaryContainer
@@ -120,7 +156,13 @@ fun IntakeScreen(
                 minLines = 3,
                 trailingIcon = {
                     if (symptomText.isNotBlank()) {
-                        IconButton(onClick = { onNavigateToResult() }) {
+                        IconButton(onClick = { 
+                            if (currentScenario?.hasVisual == true) {
+                                onNavigateToCamera(currentScenario)
+                            } else {
+                                onNavigateToResult(currentScenario)
+                            }
+                        }) {
                             Icon(Icons.Default.Send, contentDescription = "Send")
                         }
                     }
