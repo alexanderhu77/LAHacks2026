@@ -23,6 +23,8 @@ import com.lahacks2026.pretriage.data.DemoScenario
 import androidx.compose.material.icons.filled.Phone
 
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.lahacks2026.pretriage.data.*
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Lock
 
@@ -34,12 +36,22 @@ fun ResultScreen(
     onNavigateBack: () -> Unit
 ) {
     // Determine content from scenario or use defaults
-    val severity = scenario?.severity ?: "Urgent Care Today"
+    val severityLevel = scenario?.severity ?: SeverityLevel.URGENT_CARE
+    val severity = when (severityLevel) {
+        SeverityLevel.SELF_CARE -> "Self Care"
+        SeverityLevel.TELEHEALTH -> "Telehealth"
+        SeverityLevel.URGENT_CARE -> "Urgent Care Today"
+        SeverityLevel.EMERGENCY -> "EMERGENCY IMMEDIATELY"
+    }
     val reasoning = scenario?.reasoning ?: "Based on your description, we recommend visiting Urgent Care for an immediate evaluation."
     
-    val isEmergency = severity.contains("EMERGENCY", ignoreCase = true)
+    val isEmergency = severityLevel == SeverityLevel.EMERGENCY
     val severityColor = if (isEmergency) MaterialTheme.colorScheme.error else Color(0xFFE67E22)
     val severityIcon = if (isEmergency) Icons.Default.Warning else Icons.Default.Warning
+
+    val copay = plan.copayFor(severityLevel) ?: 0
+    val redFlags = scenario?.redFlags ?: emptyList()
+    val confidence = scenario?.confidence ?: 0.0
 
     var showDeidFlow by remember { mutableStateOf(false) }
 
@@ -104,6 +116,36 @@ fun ResultScreen(
                 modifier = Modifier.fillMaxWidth()
             )
 
+            if (redFlags.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    "Detected Red Flags",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                redFlags.forEach { flag ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            flag,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
+            }
+
             Divider(modifier = Modifier.padding(vertical = 8.dp))
 
             // Action Card (Insurance Routed or Emergency)
@@ -115,30 +157,34 @@ fun ResultScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        if (isEmergency) "IMMEDIATE ACTION REQUIRED" else "Recommended Action (${plan.plan_name})",
+                        if (isEmergency) "IMMEDIATE ACTION REQUIRED" else "Recommended Action (${plan.name})",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         color = if (isEmergency) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer
                     )
                     Text(
                         if (isEmergency) "Call 911 or visit the nearest Emergency Room immediately." 
-                        else "Visit '${plan.urgent_care.provider}' (${plan.urgent_care.distance}). Your copay is $${plan.urgent_care.copay}.",
+                        else "Use '${plan.urgentCareNetworkQuery}' for in-network care. Your copay is $${copay}.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = if (isEmergency) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer
                     )
                     Spacer(modifier = Modifier.height(16.dp))
+                    val buttonText = when {
+                        isEmergency -> "CALL 911 NOW"
+                        severityLevel == SeverityLevel.TELEHEALTH -> "Start Video Visit"
+                        else -> "Open Directions"
+                    }
+                    
                     Button(
-                        onClick = { /* TODO: Dialer or Maps */ },
+                        onClick = { /* TODO: Dialer or Maps/URL */ },
                         modifier = Modifier.fillMaxWidth(),
                         colors = if (isEmergency) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error) else ButtonDefaults.buttonColors()
                     ) {
                         if (isEmergency) {
                             Icon(Icons.Default.Phone, contentDescription = null)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("CALL 911 NOW")
-                        } else {
-                            Text("Open Directions")
                         }
+                        Text(buttonText)
                     }
                 }
             }
@@ -183,6 +229,31 @@ fun ResultScreen(
             }
 
             Spacer(modifier = Modifier.weight(1f))
+
+            // AI Confidence Meter
+            if (confidence > 0) {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("AI Confidence", style = MaterialTheme.typography.labelSmall)
+                        Text("${(confidence * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                    }
+                    LinearProgressIndicator(
+                        progress = confidence.toFloat(),
+                        modifier = Modifier.fillMaxWidth().height(4.dp),
+                        color = if (confidence > 0.9) Color(0xFF27AE60) else if (confidence > 0.7) Color(0xFFF1C40F) else MaterialTheme.colorScheme.error,
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                }
+                Spacer(modifier = Modifier.height(16.dp))
+            }
 
             // Privacy Footnote
             Row(
