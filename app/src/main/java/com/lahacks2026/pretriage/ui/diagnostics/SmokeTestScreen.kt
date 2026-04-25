@@ -4,16 +4,19 @@ import android.util.Log
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -38,7 +41,7 @@ import kotlinx.coroutines.withContext
 
 private const val TAG = "MelangeSmoke"
 
-private const val SMOKE_MODEL_ID = "Qwen/Qwen3-4B"
+private const val SMOKE_MODEL_ID = "Qwen/Qwen2.5-1.5B-Instruct" // Switched to a lighter 1.5B model
 private const val SMOKE_PROMPT = "What is the capital of France? Answer in one sentence."
 
 private sealed interface SmokeState {
@@ -124,7 +127,7 @@ fun SmokeTestScreen(onNavigateBack: () -> Unit) {
                                     context.applicationContext,
                                     token,
                                     SMOKE_MODEL_ID,
-                                    version = 1,
+                                    version = null, // Changed from 1 to null to get latest
                                     modelMode = LLMModelMode.RUN_AUTO,
                                     onProgress = { progress ->
                                         lastProgress = progress
@@ -180,6 +183,28 @@ fun SmokeTestScreen(onNavigateBack: () -> Unit) {
                 enabled = state !is SmokeState.Downloading && state !is SmokeState.Generating
             ) {
                 Text("Run Melange Test")
+            }
+
+            if (state is SmokeState.Error || state is SmokeState.Done) {
+                OutlinedButton(
+                    onClick = {
+                        scope.launch(Dispatchers.IO) {
+                            try {
+                                context.filesDir.resolve("mlange_cache").deleteRecursively()
+                                withContext(Dispatchers.Main) {
+                                    state = SmokeState.Idle
+                                }
+                                Log.i(TAG, "✓ Cache cleared manually.")
+                            } catch (e: Exception) {
+                                Log.e(TAG, "✗ Failed to clear cache", e)
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Clear Local Cache & Reset")
+                }
             }
 
             when (val s = state) {
