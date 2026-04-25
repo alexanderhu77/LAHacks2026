@@ -30,7 +30,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.lahacks2026.pretriage.BuildConfig
-import com.zeticai.mlange.core.model.llm.LLMModelMode
+import com.zeticai.mlange.core.model.llm.LLMQuantType
+import com.zeticai.mlange.core.model.llm.LLMTarget
 import com.zeticai.mlange.core.model.llm.ZeticMLangeLLMModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -41,7 +42,7 @@ import kotlinx.coroutines.withContext
 
 private const val TAG = "MelangeSmoke"
 
-private const val SMOKE_MODEL_ID = "Qwen/Qwen2.5-1.5B-Instruct" // Switched to a lighter 1.5B model
+private const val SMOKE_MODEL_ID = "zetic-ai/qwen2.5-0.5b-instruct" // Switched to 0.5B model to save bandwidth
 private const val SMOKE_PROMPT = "What is the capital of France? Answer in one sentence."
 
 private sealed interface SmokeState {
@@ -127,8 +128,9 @@ fun SmokeTestScreen(onNavigateBack: () -> Unit) {
                                     context.applicationContext,
                                     token,
                                     SMOKE_MODEL_ID,
-                                    version = null, // Changed from 1 to null to get latest
-                                    modelMode = LLMModelMode.RUN_AUTO,
+                                    version = null,
+                                    target = LLMTarget.LLAMA_CPP,
+                                    quantType = LLMQuantType.GGUF_QUANT_Q4_K_M,
                                     onProgress = { progress ->
                                         lastProgress = progress
                                         lastProgressAt = System.currentTimeMillis()
