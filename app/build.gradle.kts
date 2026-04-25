@@ -76,7 +76,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
 
     // Zetic MLange SDK — on-device model runtime
-    implementation("com.zeticai.mlange:mlange:1.5.8")
+    implementation("com.zeticai.mlange:mlange:1.6.1")
 
     // Lifecycle + ViewModel
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
