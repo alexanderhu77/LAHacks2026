@@ -12,6 +12,12 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -21,14 +27,17 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
@@ -48,6 +57,31 @@ import java.util.concurrent.Executors
 private enum class CapturePhase { Framing, Precheck, Warned }
 
 internal data class QualityReport(val ok: Boolean, val reason: String?)
+
+@Composable
+private fun Spinner(color: Color, size: androidx.compose.ui.unit.Dp, strokeWidth: androidx.compose.ui.unit.Dp = 3.dp) {
+    val infinite = rememberInfiniteTransition(label = "spinner")
+    val rotation by infinite.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(animation = tween(900, easing = LinearEasing)),
+        label = "spin",
+    )
+    Canvas(
+        modifier = Modifier.size(size).rotate(rotation),
+    ) {
+        val sw = strokeWidth.toPx()
+        drawArc(
+            color = color,
+            startAngle = -90f,
+            sweepAngle = 270f,
+            useCenter = false,
+            topLeft = Offset(sw / 2f, sw / 2f),
+            size = Size(this.size.width - sw, this.size.height - sw),
+            style = Stroke(width = sw),
+        )
+    }
+}
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
@@ -195,7 +229,7 @@ private fun CameraContent(
                 contentAlignment = Alignment.Center,
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(color = palette.accent, modifier = Modifier.size(44.dp), strokeWidth = 3.dp)
+                    Spinner(color = palette.accent, size = 44.dp)
                     Spacer(Modifier.height(14.dp))
                     Text("Checking quality…", color = Color.White, fontSize = 14.sp, fontFamily = palette.fontBody)
                 }
