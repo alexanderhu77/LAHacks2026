@@ -21,6 +21,6 @@ class WhisperEncoder(
     }
 
     fun close() {
-        model.deinit()
+        model.close()
     }
 }

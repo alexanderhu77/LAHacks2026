@@ -48,7 +48,7 @@ class WhisperDecoder(
         return generated
     }
 
-    fun close() = model.deinit()
+    fun close() = model.close()
 
     private val idsSliceBuffer: ByteBuffer = ByteBuffer
         .allocate(448 * Int.SIZE_BYTES)
