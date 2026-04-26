@@ -101,6 +101,7 @@ fun ResultScreen(
     diagnosticSummaryLoading: Boolean = false,
     onRestart: () -> Unit,
     onSendLabs: () -> Unit,
+    onFindProvider: () -> Unit = {},
 ) {
     val c = NoraTheme.colors
     val context = LocalContext.current
@@ -149,16 +150,25 @@ fun ResultScreen(
             diagnosticSummaryLoading = diagnosticSummaryLoading,
         )
 
-        // Primary action
+        // Primary action. EMERGENCY still dials 911 directly; every other tier
+        // gets the same "Find Urgent Care" button that opens the LA Care WebView
+        // with the user's selected network pre-filled. We don't try to auto-pick
+        // a specialty — the LA Care v3app's specialty selector resists JS
+        // injection, so the user filters on the page itself.
         Spacer(Modifier.height(18.dp))
+        val isEmergency = decision.severity == SeverityLevel.EMERGENCY
         ActionButton(
-            actionTitle = meta.actionTitle,
-            actionIcon = meta.actionIcon,
+            actionTitle = if (isEmergency) meta.actionTitle else "Find Urgent Care",
+            actionIcon = if (isEmergency) meta.actionIcon else Icons.Default.LocalHospital,
             tint = sev,
             onClick = {
-                runCatching {
-                    val intent = intentFor(decision, plan)
-                    intent?.let { context.startActivity(it) }
+                if (isEmergency) {
+                    runCatching {
+                        val intent = intentFor(decision, plan)
+                        intent?.let { context.startActivity(it) }
+                    }
+                } else {
+                    onFindProvider()
                 }
             },
         )

@@ -12,6 +12,7 @@ import com.lahacks2026.pretriage.data.ChatTurnMode
 import com.lahacks2026.pretriage.data.ChatTurnResponse
 import com.lahacks2026.pretriage.data.DiagnosticSummary
 import com.lahacks2026.pretriage.data.InsurancePlan
+import com.lahacks2026.pretriage.data.LaCareNetwork
 import com.lahacks2026.pretriage.data.InsurancePlanLoader
 import com.lahacks2026.pretriage.data.IntentHint
 import com.lahacks2026.pretriage.data.RecommendedAction
@@ -95,6 +96,9 @@ data class AppState(
     val theme: ThemeKey = ThemeKey.Warm,
     val largeType: Boolean = false,
     val plan: InsurancePlan? = null,
+    /** LA Care Medi-Cal network the user picked on the first screen. Persists for
+     *  the whole session and gets passed into the find-a-provider WebView at result time. */
+    val selectedNetwork: LaCareNetwork? = null,
 )
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
@@ -120,6 +124,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setTheme(key: ThemeKey) = _state.update { it.copy(theme = key) }
     fun setLargeType(on: Boolean) = _state.update { it.copy(largeType = on) }
+    fun setNetwork(network: LaCareNetwork) = _state.update { it.copy(selectedNetwork = network) }
 
     /** Sequentially warm each model with a dummy inference, advancing the splash UI. */
     fun runWarmup() {
@@ -454,6 +459,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+
     /**
      * Deterministic safe-by-default decision used when the orchestrator times out or
      * fails. Recommends a telehealth visit so a clinician can review, with an honest
@@ -502,6 +508,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 decision = null,
                 diagnosticSummary = null,
                 diagnosticSummaryLoading = false,
+                // selectedNetwork intentionally preserved — user picked it once,
+                // they shouldn't have to re-pick on every restart.
                 deid = DeidState(),
             )
         }

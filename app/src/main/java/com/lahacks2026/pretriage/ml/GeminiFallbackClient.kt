@@ -81,6 +81,7 @@ class GeminiFallbackClient {
         parseDiagnosticSummary(raw)
     }
 
+
     // --- network ---
 
     private fun generate(prompt: String, schema: JsonObject): String? {
@@ -273,6 +274,7 @@ class GeminiFallbackClient {
         return DiagnosticSummary(potentialDiagnosis = dx, reasoning = reasoning)
     }
 
+
     private fun parseJsonObject(text: String): JsonObject? {
         val trimmed = text.trim()
             .removePrefix("```json").removePrefix("```")
@@ -343,6 +345,7 @@ class GeminiFallbackClient {
         })
         add("required", JsonArray().apply { add("potentialDiagnosis"); add("reasoning") })
     }
+
 
     private fun typedString(): JsonObject = JsonObject().apply { addProperty("type", "STRING") }
 

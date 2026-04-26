@@ -19,7 +19,9 @@ import com.lahacks2026.pretriage.ui.camera.CameraScreen
 import com.lahacks2026.pretriage.ui.chat.ChatScreen
 import com.lahacks2026.pretriage.ui.deid.DeidUploadScreen
 import com.lahacks2026.pretriage.ui.intake.IntakeScreen
+import com.lahacks2026.pretriage.ui.network.PickNetworkScreen
 import com.lahacks2026.pretriage.ui.permissions.PermissionsScreen
+import com.lahacks2026.pretriage.ui.provider.FindProviderScreen
 import com.lahacks2026.pretriage.ui.result.ResultScreen
 import com.lahacks2026.pretriage.ui.splash.SplashScreen
 import com.lahacks2026.pretriage.ui.triaging.TriagingScreen
@@ -27,12 +29,14 @@ import com.lahacks2026.pretriage.ui.triaging.TriagingScreen
 private object Routes {
     const val Splash = "splash"
     const val Permissions = "permissions"
+    const val PickNetwork = "pickNetwork"
     const val Intake = "intake"
     const val Chat = "chat"
     const val CameraOffer = "cameraOffer"
     const val CameraCapture = "cameraCapture"
     const val Triaging = "triaging"
     const val Result = "result"
+    const val FindProvider = "findProvider"
     const val Deid = "deid"
 }
 
@@ -64,8 +68,23 @@ fun PreTriageNavGraph(
         composable(Routes.Permissions) {
             PermissionsScreen(
                 onContinue = {
-                    navController.navigate(Routes.Intake) {
+                    // If the network was already picked in a prior session (state survived),
+                    // skip past the picker straight to intake.
+                    val target = if (state.selectedNetwork != null) Routes.Intake else Routes.PickNetwork
+                    navController.navigate(target) {
                         popUpTo(Routes.Permissions) { inclusive = true }
+                    }
+                },
+            )
+        }
+
+        composable(Routes.PickNetwork) {
+            PickNetworkScreen(
+                selected = state.selectedNetwork,
+                onPick = viewModel::setNetwork,
+                onContinue = {
+                    navController.navigate(Routes.Intake) {
+                        popUpTo(Routes.PickNetwork) { inclusive = true }
                     }
                 },
             )
@@ -170,8 +189,16 @@ fun PreTriageNavGraph(
                         }
                     },
                     onSendLabs = { navController.navigate(Routes.Deid) },
+                    onFindProvider = { navController.navigate(Routes.FindProvider) },
                 )
             }
+        }
+
+        composable(Routes.FindProvider) {
+            FindProviderScreen(
+                network = state.selectedNetwork,
+                onBack = { navController.popBackStack() },
+            )
         }
 
         composable(Routes.Deid) {

@@ -14,7 +14,8 @@
       "Bash(./gradlew :app:assembleDebug :app:compileDebugUnitTestKotlin)",
       "Bash(./gradlew :app:compileDebugUnitTestKotlin --rerun-tasks)",
       "Bash(git add *)",
-      "Bash(./gradlew :app:assembleDebug :app:compileDebugUnitTestKotlin --rerun-tasks)"
+      "Bash(./gradlew :app:assembleDebug :app:compileDebugUnitTestKotlin --rerun-tasks)",
+      "Bash(./gradlew :app:assembleDebug --rerun-tasks)"
     ]
   }
 }
