@@ -1,5 +1,10 @@
 package com.lahacks2026.pretriage.ml
 
+import android.graphics.Bitmap
+import com.lahacks2026.pretriage.data.ChatMessage
+import com.lahacks2026.pretriage.data.ChatTurnMode
+import com.lahacks2026.pretriage.data.ChatTurnResponse
+import com.lahacks2026.pretriage.data.InsurancePlan
 import com.lahacks2026.pretriage.data.IntentHint
 import com.lahacks2026.pretriage.data.RecommendedAction
 import com.lahacks2026.pretriage.data.RedFlag
@@ -78,6 +83,25 @@ class FakeMelangeRuntime(
                 confidence = 0.78
             )
         )
+    }
+
+    /**
+     * Stub: returns ready_to_triage immediately wrapping the same canned decision
+     * the [triage] method would produce. Real model-driven dialogue is in
+     * [MelangeRuntimeImpl.nextTurn].
+     */
+    override suspend fun nextTurn(
+        history: List<ChatMessage>,
+        image: Bitmap?,
+        plan: InsurancePlan?,
+        followupCount: Int,
+        mode: ChatTurnMode,
+    ): Result<ChatTurnResponse> {
+        val transcript = history.filterIsInstance<ChatMessage.User>()
+            .joinToString(" ") { it.text }
+        val decision = triage(TriageRequest(transcript = transcript, image = image, plan = plan))
+            .getOrElse { return Result.failure(it) }
+        return Result.success(ChatTurnResponse.ReadyToTriage(decision))
     }
 
     override suspend fun transcribe(audioPath: String): Result<String> =

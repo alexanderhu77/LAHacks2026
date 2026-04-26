@@ -1,8 +1,13 @@
 package com.lahacks2026.pretriage.ml
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.util.Log
 import com.lahacks2026.pretriage.BuildConfig
+import com.lahacks2026.pretriage.data.ChatMessage
+import com.lahacks2026.pretriage.data.ChatTurnMode
+import com.lahacks2026.pretriage.data.ChatTurnResponse
+import com.lahacks2026.pretriage.data.InsurancePlan
 import com.lahacks2026.pretriage.data.IntentHint
 import com.lahacks2026.pretriage.data.RecommendedAction
 import com.lahacks2026.pretriage.data.SeverityLevel
@@ -10,6 +15,7 @@ import com.lahacks2026.pretriage.data.TriageDecision
 import com.lahacks2026.pretriage.data.TriageRequest
 import com.lahacks2026.pretriage.ml.clip.ClipImageEncoder
 import com.lahacks2026.pretriage.ml.clip.ClipLabelClassifier
+import com.lahacks2026.pretriage.triage.ChatTurnParser
 import com.zeticai.mlange.core.model.llm.LLMQuantType
 import com.zeticai.mlange.core.model.llm.LLMTarget
 import com.zeticai.mlange.core.model.llm.ZeticMLangeLLMModel
@@ -33,6 +39,15 @@ private const val MAX_OUTPUT_TOKENS = 160
 // which let the model use the entire token budget on prose and never reach
 // the verdict — observed on-device cut-off mid-sentence.
 private const val PROMPT_PREFILL_TAIL = "RESULT: "
+
+/** Chat turns are short JSON objects — keep latency tight. */
+private const val MAX_CHAT_TURN_TOKENS = 140
+
+/** DIALOGUE prefill: model picks any of the three kinds. */
+private const val CHAT_PREFILL_DIALOGUE = "{\"kind\":\""
+
+/** FINALIZE prefill: commits to ready_to_triage; only the body is generated. */
+private const val CHAT_PREFILL_FINALIZE = "{\"kind\":\"ready_to_triage\",\"severity\":\""
 
 class MelangeRuntimeImpl(
     private val context: Context
@@ -174,6 +189,135 @@ class MelangeRuntimeImpl(
 
         Log.d(TAG, "raw output:\n$raw")
         parseRawResponse(raw, visualFinding)
+    }
+
+    /**
+     * Model-driven chat turn. Returns one of ask_followup / request_photo / ready_to_triage
+     * (PRD §6.3). Prompt is a few-shot pattern-completion with a dangling JSON prefill so the
+     * model's first token must be inside an object — hard to ramble out of.
+     *
+     * In FINALIZE mode the prefill commits to ready_to_triage so the model can only fill in
+     * the decision body; this is how we honor the 7-turn cap.
+     */
+    override suspend fun nextTurn(
+        history: List<ChatMessage>,
+        image: Bitmap?,
+        plan: InsurancePlan?,
+        followupCount: Int,
+        mode: ChatTurnMode,
+    ): Result<ChatTurnResponse> = runCatching {
+        warmupResult?.exceptionOrNull()?.let {
+            error("nextTurn skipped — warmup failed: ${it.message}")
+        }
+        ensureModel { }
+        val prefill = if (mode == ChatTurnMode.FINALIZE) CHAT_PREFILL_FINALIZE else CHAT_PREFILL_DIALOGUE
+        val prompt = buildChatTurnPrompt(history, image != null, followupCount, mode, prefill)
+        val started = System.currentTimeMillis()
+
+        val raw = runMutex.withLock {
+            val m = model ?: error("model null")
+            withContext(Dispatchers.IO) {
+                // Same KV-cache rule as triage: each turn is its own one-shot.
+                m.cleanUp()
+                m.run(prompt)
+                val sb = StringBuilder(prefill)
+                var count = 0
+                while (count < MAX_CHAT_TURN_TOKENS) {
+                    val r = m.waitForNextToken()
+                    if (r.generatedTokens == 0) break
+                    sb.append(r.token)
+                    count++
+                    if (count > 8 && looksLikeCompletedJson(sb)) break
+                }
+                Log.i(TAG, "nextTurn gen: tokens=$count durMs=${System.currentTimeMillis() - started} mode=$mode")
+                sb.toString()
+            }
+        }
+
+        Log.i(TAG, "nextTurn raw output (chars=${raw.length}):\n${raw.take(800)}")
+        val parsed = ChatTurnParser.parse(raw, plan)
+            ?: error("could not parse chat turn from: ${raw.take(200).replace("\n", " ")}")
+
+        // PRD §6.3 invariants:
+        //  - never request a photo if one is already attached
+        //  - in FINALIZE mode the response must be ready_to_triage
+        val coerced: ChatTurnResponse = if (parsed is ChatTurnResponse.RequestPhoto && image != null) {
+            Log.w(TAG, "model emitted request_photo with image attached; coercing to ask_followup")
+            ChatTurnResponse.AskFollowup("Anything else you want to share before I take a look?")
+        } else parsed
+        if (mode == ChatTurnMode.FINALIZE && coerced !is ChatTurnResponse.ReadyToTriage) {
+            error("FINALIZE mode produced non-ready response: $coerced")
+        }
+        coerced
+    }
+
+    /**
+     * Few-shot pattern-completion prompt for chat turns. Three exemplars cover the
+     * three response kinds; the live conversation is appended and `Next: {prefill`
+     * is dangled. The model has nowhere to ramble — it has to complete a JSON object.
+     */
+    private fun buildChatTurnPrompt(
+        history: List<ChatMessage>,
+        hasPhoto: Boolean,
+        followupCount: Int,
+        mode: ChatTurnMode,
+        prefill: String,
+    ): String = buildString {
+        append("History:\n")
+        append("Patient: I have a sore throat for two days.\n")
+        append("Next: {\"kind\":\"ask_followup\",\"question\":\"Any fever or trouble swallowing?\"}\n\n")
+
+        append("History:\n")
+        append("Patient: I have a mole on my arm that's been changing.\n")
+        append("Nora: Roughly how long has it been changing?\n")
+        append("Patient: A few months. Edges look jagged.\n")
+        append("Next: {\"kind\":\"request_photo\",\"reason\":\"A photo helps me look at the borders and color.\"}\n\n")
+
+        append("History:\n")
+        append("Patient: My five-year-old has a red goopy eye.\n")
+        append("Nora: Just one eye or both?\n")
+        append("Patient: Just the right one. No fever, was sniffly last week.\n")
+        append("Next: {\"kind\":\"ready_to_triage\",\"severity\":\"TELEHEALTH\",\"reasoning\":\"Pink eye is typically treatable via video visit.\",\"red_flags\":[],\"recommended_action\":{\"provider\":\"Pediatric telehealth\",\"intent_hint\":\"OPEN_TELEHEALTH_DEEP_LINK\"},\"confidence\":0.80}\n\n")
+
+        append("History:\n")
+        if (history.isEmpty()) append("Patient: (no description yet)\n")
+        else for (m in history) {
+            when (m) {
+                is ChatMessage.User -> append("Patient: ").append(m.text).append('\n')
+                is ChatMessage.Nora -> append("Nora: ").append(m.text).append('\n')
+                is ChatMessage.PhotoRequest -> append("Nora: (asked for a photo) ").append(m.reason).append('\n')
+                is ChatMessage.Photo -> append("Patient: (attached a photo)\n")
+            }
+        }
+        if (hasPhoto) append("Note: Patient already attached a photo; do NOT request another.\n")
+        if (mode == ChatTurnMode.FINALIZE) {
+            append("Note: FINALIZE — must output ready_to_triage now (cap reached).\n")
+        } else if (followupCount >= 3) {
+            append("Note: Already asked $followupCount follow-ups; prefer ready_to_triage.\n")
+        }
+        append("Next: ").append(prefill)
+    }
+
+    /** True once the running buffer contains a balanced top-level JSON object. */
+    private fun looksLikeCompletedJson(sb: StringBuilder): Boolean {
+        val s = sb.toString()
+        val firstBrace = s.indexOf('{')
+        if (firstBrace < 0) return false
+        var depth = 0
+        var inString = false
+        var escaped = false
+        for (i in firstBrace until s.length) {
+            val c = s[i]
+            if (escaped) { escaped = false; continue }
+            if (c == '\\' && inString) { escaped = true; continue }
+            if (c == '"') { inString = !inString; continue }
+            if (inString) continue
+            when (c) {
+                '{' -> depth++
+                '}' -> { depth--; if (depth == 0) return true }
+            }
+        }
+        return false
     }
 
     override suspend fun transcribe(audioPath: String): Result<String> =

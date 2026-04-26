@@ -16,6 +16,7 @@ import com.lahacks2026.pretriage.privacy.MockTelehealthClient
 import com.lahacks2026.pretriage.privacy.RegexAnonymizer
 import com.lahacks2026.pretriage.ui.camera.CameraOfferScreen
 import com.lahacks2026.pretriage.ui.camera.CameraScreen
+import com.lahacks2026.pretriage.ui.chat.ChatScreen
 import com.lahacks2026.pretriage.ui.deid.DeidUploadScreen
 import com.lahacks2026.pretriage.ui.intake.IntakeScreen
 import com.lahacks2026.pretriage.ui.permissions.PermissionsScreen
@@ -27,6 +28,7 @@ private object Routes {
     const val Splash = "splash"
     const val Permissions = "permissions"
     const val Intake = "intake"
+    const val Chat = "chat"
     const val CameraOffer = "cameraOffer"
     const val CameraCapture = "cameraCapture"
     const val Triaging = "triaging"
@@ -75,12 +77,7 @@ fun PreTriageNavGraph(
                 hasImage = state.image != null,
                 onTranscriptChange = viewModel::setTranscript,
                 onContinue = {
-                    if (mentionsImageySymptom(state.intake.transcript) && state.image == null) {
-                        navController.navigate(Routes.CameraOffer)
-                    } else {
-                        viewModel.runTriage()
-                        navController.navigate(Routes.Triaging)
-                    }
+                    navController.navigate(Routes.Chat)
                 },
                 onCamera = {
                     navController.navigate(Routes.CameraCapture)
@@ -94,14 +91,41 @@ fun PreTriageNavGraph(
             )
         }
 
+        composable(Routes.Chat) {
+            ChatScreen(
+                state = state.chat,
+                image = state.image,
+                onComposerChange = viewModel::setComposer,
+                onChatRecordingChange = viewModel::setChatRecording,
+                onSend = viewModel::sendUserMessage,
+                onAdvanceNoraTurn = viewModel::advanceNoraTurn,
+                onAppendPhotoBubbleIfNeeded = viewModel::appendPhotoBubbleIfNeeded,
+                onAppendSkippedPhoto = viewModel::appendSkippedPhoto,
+                onStartChatIfNeeded = viewModel::startChatIfNeeded,
+                onRequestPhoto = { navController.navigate(Routes.CameraOffer) },
+                onReadyToTriage = {
+                    viewModel.runTriage()
+                    navController.navigate(Routes.Triaging)
+                },
+                onEmergencyShortCircuit = {
+                    viewModel.runTriage()
+                    navController.navigate(Routes.Result)
+                },
+                onRestart = {
+                    viewModel.resetSession()
+                    navController.navigate(Routes.Splash) {
+                        popUpTo(0) { inclusive = true }
+                    }
+                }
+            )
+        }
+
         composable(Routes.CameraOffer) {
             CameraOfferScreen(
                 onTakePhoto = { navController.navigate(Routes.CameraCapture) },
                 onSkip = {
-                    viewModel.runTriage()
-                    navController.navigate(Routes.Triaging) {
-                        popUpTo(Routes.CameraOffer) { inclusive = true }
-                    }
+                    viewModel.appendSkippedPhoto()
+                    navController.popBackStack(Routes.Chat, false)
                 },
             )
         }
@@ -110,10 +134,7 @@ fun PreTriageNavGraph(
             CameraScreen(
                 onPhotoCaptured = { bm ->
                     viewModel.setImage(bm)
-                    viewModel.runTriage()
-                    navController.navigate(Routes.Triaging) {
-                        popUpTo(Routes.CameraOffer) { inclusive = true }
-                    }
+                    navController.popBackStack(Routes.Chat, false)
                 },
                 onCancel = { navController.popBackStack() },
             )
@@ -169,16 +190,4 @@ fun PreTriageNavGraph(
             )
         }
     }
-}
-
-private val IMAGEY_KEYWORDS = listOf(
-    "rash", "mole", "bump", "spot", "skin", "wound", "cut", "scrape",
-    "eye", "swelling", "swollen", "bruise", "redness", "lesion", "burn",
-    "bite", "sting", "mark", "scab", "blister", "ulcer", "patch", "lump",
-    "discoloration", "injury", "blood", "bleed", "broken",
-)
-
-private fun mentionsImageySymptom(transcript: String): Boolean {
-    val t = transcript.lowercase()
-    return IMAGEY_KEYWORDS.any { it in t }
 }

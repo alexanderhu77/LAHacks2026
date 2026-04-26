@@ -7,3 +7,9 @@
 # Personal access token from https://mlange.zetic.ai (Settings -> Personal Access Token)
 # Required for the Melange smoke test on the home screen.
 MELANGE_TOKEN=
+
+# Google AI Studio API key (https://aistudio.google.com/apikey).
+# Optional — used as a cloud fallback when the on-device model times out
+# or fails to produce a parseable response. Leave blank to disable
+# fallback (the user will see the timeout error instead).
+GEMINI_API_KEY=

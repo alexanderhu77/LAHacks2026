@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
@@ -94,6 +95,7 @@ fun NoraButton(
     kind: NoraBtnKind = NoraBtnKind.Primary,
     big: Boolean = false,
     enabled: Boolean = true,
+    shape: Shape = RoundedCornerShape(14.dp),
     leadingIcon: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
@@ -109,9 +111,9 @@ fun NoraButton(
 
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
+            .clip(shape)
             .background(bg)
-            .border(BorderStroke(1.dp, SolidColor(border)), RoundedCornerShape(14.dp))
+            .border(BorderStroke(1.dp, SolidColor(border)), shape)
             .clickable(enabled = enabled) { onClick() }
             .padding(pad),
         contentAlignment = Alignment.Center,

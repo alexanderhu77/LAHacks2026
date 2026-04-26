@@ -38,6 +38,14 @@ class TriageOrchestratorTest {
             fail("Runtime should not be called when emergency short-circuit fires")
             error("unreachable")
         }
+        override suspend fun nextTurn(
+            history: List<com.lahacks2026.pretriage.data.ChatMessage>,
+            image: android.graphics.Bitmap?,
+            plan: com.lahacks2026.pretriage.data.InsurancePlan?,
+            followupCount: Int,
+            mode: com.lahacks2026.pretriage.data.ChatTurnMode,
+        ): Result<com.lahacks2026.pretriage.data.ChatTurnResponse> =
+            Result.failure(NotImplementedError("not used in this test"))
         override suspend fun transcribe(audioPath: String) = Result.success("")
         override suspend fun extractDocument(imageUri: String) = Result.success("")
     }
@@ -46,6 +54,14 @@ class TriageOrchestratorTest {
         override val isReady: StateFlow<Boolean> = MutableStateFlow(true)
         override suspend fun warmUp(onProgress: (Float) -> Unit) = Result.success(Unit)
         override suspend fun triage(req: TriageRequest) = Result.success(out)
+        override suspend fun nextTurn(
+            history: List<com.lahacks2026.pretriage.data.ChatMessage>,
+            image: android.graphics.Bitmap?,
+            plan: com.lahacks2026.pretriage.data.InsurancePlan?,
+            followupCount: Int,
+            mode: com.lahacks2026.pretriage.data.ChatTurnMode,
+        ): Result<com.lahacks2026.pretriage.data.ChatTurnResponse> =
+            Result.failure(NotImplementedError("not used in this test"))
         override suspend fun transcribe(audioPath: String) = Result.success("")
         override suspend fun extractDocument(imageUri: String) = Result.success("")
     }

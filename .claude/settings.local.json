@@ -2,7 +2,18 @@
   "permissions": {
     "allow": [
       "Bash(./gradlew assembleDebug)",
-      "Bash(./gradlew testDebugUnitTest)"
+      "Bash(./gradlew testDebugUnitTest)",
+      "Bash(git stash *)",
+      "Bash(git checkout *)",
+      "Bash(grep -c *)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(./gradlew :app:compileDebugKotlin)",
+      "Bash(./gradlew :app:assembleDebug)",
+      "Bash(./gradlew :app:compileDebugKotlin --rerun-tasks)",
+      "Bash(./gradlew :app:compileDebugUnitTestKotlin)",
+      "Bash(./gradlew :app:assembleDebug :app:compileDebugUnitTestKotlin)",
+      "Bash(./gradlew :app:compileDebugUnitTestKotlin --rerun-tasks)",
+      "Bash(git add *)"
     ]
   }
 }

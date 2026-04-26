@@ -11,6 +11,7 @@ val localProps = Properties().apply {
     if (f.exists()) f.inputStream().use { load(it) }
 }
 val melangeToken: String = localProps.getProperty("MELANGE_TOKEN", "")
+val geminiApiKey: String = localProps.getProperty("GEMINI_API_KEY", "")
 
 android {
     namespace = "com.lahacks2026.pretriage"
@@ -29,6 +30,7 @@ android {
         }
 
         buildConfigField("String", "MELANGE_TOKEN", "\"$melangeToken\"")
+        buildConfigField("String", "GEMINI_API_KEY", "\"$geminiApiKey\"")
     }
 
     buildTypes {
