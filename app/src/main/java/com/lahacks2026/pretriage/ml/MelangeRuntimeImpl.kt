@@ -123,16 +123,25 @@ class MelangeRuntimeImpl(
     }
 
     private fun buildPrompt(req: TriageRequest): String = buildString {
+        // Qwen3 chat template. Two non-obvious bits:
+        //   1. Empty <think>\n\n</think> after the assistant turn is Qwen3's
+        //      documented "no-think" idiom — disables chain-of-thought so we
+        //      don't burn tokens on prose. Without this Qwen3 reasoning kicks
+        //      in by default and rambles past our token cap.
+        //   2. Trailing "{" prefills the assistant's response into an open
+        //      JSON object, so the model has nowhere to go but JSON content.
+        //      The "{" is seeded into the output buffer in triage() so the
+        //      parser sees a balanced object.
+        append("<|im_start|>system\n")
         append(Prompts.MEDGEMMA_SYSTEM_PROMPT.trim())
-        append("\n\nPatient transcript: \"")
-        append(req.transcript.ifBlank { "(no transcript)" })
-        append("\"\n\n")
-        append("CRITICAL: Do not think out loud. Do not explain. Do not write any prose. ")
-        append("Output ONLY the JSON object — your very next character must continue a JSON object body. ")
-        append("Begin now:\n\n")
-        // Prefill the opening brace. The model is forced to continue a JSON
-        // object instead of writing chain-of-thought prose. Seeded into the
-        // output buffer in triage() so the parser sees a complete object.
+        append("<|im_end|>\n")
+        append("<|im_start|>user\n")
+        append("Symptom description: \"")
+        append(req.transcript.ifBlank { "(none provided)" })
+        append("\"\n\nClassify this into a routing tier and emit the JSON. JSON only.")
+        append("<|im_end|>\n")
+        append("<|im_start|>assistant\n")
+        append("<think>\n\n</think>\n\n")
         append("{")
     }
 
