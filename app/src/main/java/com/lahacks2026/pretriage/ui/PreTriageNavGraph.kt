@@ -161,6 +161,8 @@ fun PreTriageNavGraph(
                     isShortCircuit = decision.severity == SeverityLevel.EMERGENCY &&
                         decision.redFlags.isNotEmpty() &&
                         decision.confidence == 1.0,
+                    diagnosticSummary = state.diagnosticSummary,
+                    diagnosticSummaryLoading = state.diagnosticSummaryLoading,
                     onRestart = {
                         viewModel.resetSession()
                         navController.navigate(Routes.Splash) {

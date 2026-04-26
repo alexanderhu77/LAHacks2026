@@ -10,6 +10,7 @@ import com.lahacks2026.pretriage.data.ChatScripts
 import com.lahacks2026.pretriage.data.ChatTurn
 import com.lahacks2026.pretriage.data.ChatTurnMode
 import com.lahacks2026.pretriage.data.ChatTurnResponse
+import com.lahacks2026.pretriage.data.DiagnosticSummary
 import com.lahacks2026.pretriage.data.InsurancePlan
 import com.lahacks2026.pretriage.data.InsurancePlanLoader
 import com.lahacks2026.pretriage.data.IntentHint
@@ -85,6 +86,11 @@ data class AppState(
     val chat: ChatUiState = ChatUiState(),
     val image: Bitmap? = null,
     val decision: TriageDecision? = null,
+    /** Result-page synthesis (potential diagnosis + reasoning paragraph). Fetched
+     *  asynchronously from Gemini when [decision] lands; null while loading or if the
+     *  call fails / GEMINI_API_KEY is unset. The UI should fall back gracefully. */
+    val diagnosticSummary: DiagnosticSummary? = null,
+    val diagnosticSummaryLoading: Boolean = false,
     val deid: DeidState = DeidState(),
     val theme: ThemeKey = ThemeKey.Warm,
     val largeType: Boolean = false,
@@ -324,16 +330,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 ),
             )
         }
-        is ChatTurnResponse.ReadyToTriage -> _state.update {
-            it.copy(
-                chat = it.chat.copy(
-                    scriptIdx = it.chat.scriptIdx + 1,
-                    pendingNoraTurn = false,
-                    readyToTriage = true,
-                ),
-                // Model already produced the final decision — runTriage short-circuits.
-                decision = resp.decision,
-            )
+        is ChatTurnResponse.ReadyToTriage -> {
+            _state.update {
+                it.copy(
+                    chat = it.chat.copy(
+                        scriptIdx = it.chat.scriptIdx + 1,
+                        pendingNoraTurn = false,
+                        readyToTriage = true,
+                    ),
+                    // Model already produced the final decision — runTriage short-circuits.
+                    decision = resp.decision,
+                    diagnosticSummary = null,
+                    diagnosticSummaryLoading = geminiFallback.isConfigured,
+                )
+            }
+            fetchDiagnosticSummary(resp.decision)
         }
     }
 
@@ -395,10 +406,52 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     timeoutFallbackDecision(s.plan)
                 }
             }
-            _state.update { it.copy(decision = decision) }
+            _state.update {
+                it.copy(
+                    decision = decision,
+                    diagnosticSummary = null,
+                    diagnosticSummaryLoading = geminiFallback.isConfigured,
+                )
+            }
+            fetchDiagnosticSummary(decision)
         }
         triageJob = job
         return job
+    }
+
+    /**
+     * Fire-and-forget Gemini call that synthesizes a "potential diagnosis +
+     * reasoning" pair from the chat history and the chosen severity. Result is
+     * pushed into [AppState.diagnosticSummary]; null on failure (the result page
+     * falls back to [TriageDecision.reasoning]).
+     *
+     * No-op when GEMINI_API_KEY is unset (loading flag stays false so the UI
+     * doesn't render an indefinite spinner).
+     */
+    private fun fetchDiagnosticSummary(decision: TriageDecision) {
+        if (!geminiFallback.isConfigured) {
+            _state.update { it.copy(diagnosticSummaryLoading = false) }
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val s = _state.value
+            val summary = withTimeoutOrNull(GEMINI_FALLBACK_TIMEOUT_MS) {
+                geminiFallback.diagnosticSummary(
+                    history = s.chat.messages,
+                    severity = decision.severity,
+                )
+            }
+            Log.i(
+                "AppViewModel",
+                "diagnosticSummary fetched (severity=${decision.severity}, hit=${summary != null})",
+            )
+            _state.update {
+                it.copy(
+                    diagnosticSummary = summary,
+                    diagnosticSummaryLoading = false,
+                )
+            }
+        }
     }
 
     /**
@@ -447,6 +500,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 chat = ChatUiState(),
                 image = null,
                 decision = null,
+                diagnosticSummary = null,
+                diagnosticSummaryLoading = false,
                 deid = DeidState(),
             )
         }

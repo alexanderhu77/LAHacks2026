@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.lahacks2026.pretriage.data.DiagnosticSummary
 import com.lahacks2026.pretriage.data.IntentHint
 import com.lahacks2026.pretriage.data.SeverityLevel
 import com.lahacks2026.pretriage.data.TriageDecision
@@ -96,6 +97,8 @@ fun ResultScreen(
     decision: TriageDecision,
     plan: InsurancePlan?,
     isShortCircuit: Boolean,
+    diagnosticSummary: DiagnosticSummary? = null,
+    diagnosticSummaryLoading: Boolean = false,
     onRestart: () -> Unit,
     onSendLabs: () -> Unit,
 ) {
@@ -139,7 +142,12 @@ fun ResultScreen(
 
         // What I'm seeing card
         Spacer(Modifier.height(22.dp))
-        ReasoningCard(decision = decision, isShortCircuit = isShortCircuit)
+        ReasoningCard(
+            decision = decision,
+            isShortCircuit = isShortCircuit,
+            diagnosticSummary = diagnosticSummary,
+            diagnosticSummaryLoading = diagnosticSummaryLoading,
+        )
 
         // Primary action
         Spacer(Modifier.height(18.dp))
@@ -205,7 +213,12 @@ private fun SeverityPill(meta: SeverityMeta, sev: Color) {
 }
 
 @Composable
-private fun ReasoningCard(decision: TriageDecision, isShortCircuit: Boolean) {
+private fun ReasoningCard(
+    decision: TriageDecision,
+    isShortCircuit: Boolean,
+    diagnosticSummary: DiagnosticSummary? = null,
+    diagnosticSummaryLoading: Boolean = false,
+) {
     val c = NoraTheme.colors
     Column(
         modifier = Modifier
@@ -227,8 +240,45 @@ private fun ReasoningCard(decision: TriageDecision, isShortCircuit: Boolean) {
                 fontWeight = FontWeight.SemiBold,
             )
         }
-        Spacer(Modifier.height(8.dp))
-        Text(decision.reasoning, style = NoraTheme.typography.body, color = c.ink)
+        Spacer(Modifier.height(10.dp))
+
+        // Three display modes:
+        //  1. Gemini synthesis returned → "Potential diagnosis: …" + reasoning paragraph
+        //  2. Synthesis still loading → small placeholder so the card isn't empty
+        //  3. No synthesis (Gemini unset / failed) → fall back to the model's reasoning
+        when {
+            diagnosticSummary != null -> {
+                Text(
+                    "Potential diagnosis",
+                    style = NoraTheme.typography.label,
+                    color = c.inkSoft,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    diagnosticSummary.potentialDiagnosis,
+                    style = NoraTheme.typography.body,
+                    color = c.ink,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    diagnosticSummary.reasoning,
+                    style = NoraTheme.typography.body,
+                    color = c.ink,
+                )
+            }
+            diagnosticSummaryLoading -> {
+                Text(
+                    "Reading back what you described…",
+                    style = NoraTheme.typography.body,
+                    color = c.inkSoft,
+                )
+            }
+            else -> {
+                Text(decision.reasoning, style = NoraTheme.typography.body, color = c.ink)
+            }
+        }
 
         if (decision.redFlags.isNotEmpty()) {
             Spacer(Modifier.height(14.dp))

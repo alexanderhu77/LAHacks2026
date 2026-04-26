@@ -9,6 +9,7 @@ import com.lahacks2026.pretriage.BuildConfig
 import com.lahacks2026.pretriage.data.ChatMessage
 import com.lahacks2026.pretriage.data.ChatTurnMode
 import com.lahacks2026.pretriage.data.ChatTurnResponse
+import com.lahacks2026.pretriage.data.DiagnosticSummary
 import com.lahacks2026.pretriage.data.InsurancePlan
 import com.lahacks2026.pretriage.data.IntentHint
 import com.lahacks2026.pretriage.data.RecommendedAction
@@ -61,6 +62,24 @@ class GeminiFallbackClient {
             val raw = generate(buildTriagePrompt(transcript), triageSchema()) ?: return@withContext null
             parseTriageResponse(raw, plan)
         }
+
+    /**
+     * Result-page synthesis: takes the full chat history + chosen severity and
+     * returns a "potential diagnosis + reasoning paragraph" pair. The reasoning
+     * explicitly references what the patient said so it doesn't read as boilerplate.
+     */
+    suspend fun diagnosticSummary(
+        history: List<ChatMessage>,
+        severity: com.lahacks2026.pretriage.data.SeverityLevel,
+    ): DiagnosticSummary? = withContext(Dispatchers.IO) {
+        if (!isConfigured) {
+            Log.w(TAG, "diagnosticSummary skipped: GEMINI_API_KEY missing")
+            return@withContext null
+        }
+        val raw = generate(buildDiagnosticSummaryPrompt(history, severity), diagnosticSummarySchema())
+            ?: return@withContext null
+        parseDiagnosticSummary(raw)
+    }
 
     // --- network ---
 
@@ -186,6 +205,28 @@ class GeminiFallbackClient {
         append("\n\nReply with one JSON object only, no prose.")
     }
 
+    private fun buildDiagnosticSummaryPrompt(
+        history: List<ChatMessage>,
+        severity: SeverityLevel,
+    ): String = buildString {
+        append("You are a pre-triage assistant explaining a recommendation to the patient.\n")
+        append("The system has already chosen a care tier: ").append(severity.name).append(".\n\n")
+        append("Write a JSON object with two fields:\n")
+        append("  potentialDiagnosis — a short plain-language description of what the symptoms are MOST CONSISTENT WITH (e.g., \"Likely viral pharyngitis\", \"Possible musculoskeletal injury\"). Lead with \"Likely\", \"Possible\", or \"Consistent with\". Never definitive.\n")
+        append("  reasoning — 2-3 sentences explaining WHY the conversation points to this. Reference the specific things the patient said. End with one sentence on why the recommended tier is appropriate.\n\n")
+        append("Conversation:\n")
+        if (history.isEmpty()) append("(no chat history available)\n")
+        else for (m in history) {
+            when (m) {
+                is ChatMessage.User -> append("Patient: ").append(m.text).append('\n')
+                is ChatMessage.Nora -> append("Nora: ").append(m.text).append('\n')
+                is ChatMessage.PhotoRequest -> append("Nora: (asked for a photo) ").append(m.reason).append('\n')
+                is ChatMessage.Photo -> append("Patient: (attached a photo)\n")
+            }
+        }
+        append("\nWrite for the patient (second person). Be concrete about what they described. Do not diagnose definitively. Reply with one JSON object only.")
+    }
+
     // --- parsers ---
 
     private fun parseChatResponse(text: String, mode: ChatTurnMode, plan: InsurancePlan?): ChatTurnResponse? {
@@ -222,6 +263,14 @@ class GeminiFallbackClient {
             runCatching { it.asDouble }.getOrNull() ?: it.asString?.toDoubleOrNull()
         } ?: 0.7
         return buildDecision(severity, reasoning, confidence, plan)
+    }
+
+    private fun parseDiagnosticSummary(text: String): DiagnosticSummary? {
+        val obj = parseJsonObject(text) ?: return null
+        val dx = obj.get("potentialDiagnosis")?.asString?.trim().orEmpty()
+        val reasoning = obj.get("reasoning")?.asString?.trim().orEmpty()
+        if (dx.isBlank() || reasoning.isBlank()) return null
+        return DiagnosticSummary(potentialDiagnosis = dx, reasoning = reasoning)
     }
 
     private fun parseJsonObject(text: String): JsonObject? {
@@ -284,6 +333,15 @@ class GeminiFallbackClient {
             add("confidence", JsonObject().apply { addProperty("type", "NUMBER") })
         })
         add("required", JsonArray().apply { add("severity"); add("reasoning"); add("confidence") })
+    }
+
+    private fun diagnosticSummarySchema(): JsonObject = JsonObject().apply {
+        addProperty("type", "OBJECT")
+        add("properties", JsonObject().apply {
+            add("potentialDiagnosis", typedString())
+            add("reasoning", typedString())
+        })
+        add("required", JsonArray().apply { add("potentialDiagnosis"); add("reasoning") })
     }
 
     private fun typedString(): JsonObject = JsonObject().apply { addProperty("type", "STRING") }
