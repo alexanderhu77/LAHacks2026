@@ -45,10 +45,15 @@ class MelangeRuntimeImpl(
             error("MELANGE_TOKEN missing in local.properties")
         }
         ensureModel(onProgress)
-        // Dummy inference to surface NPU/CPU init cost during warmup, not first triage.
+        // Dummy inference to surface NPU/CPU init cost during warmup, not first
+        // triage. cleanUp() before AND after — Zetic's LLM runtime retains KV
+        // cache / conversation state across .run() calls, so without these the
+        // dummy "Hi." would leak into the next triage prompt and the model
+        // would respond as if the user actually said hello.
         runMutex.withLock {
             val m = model ?: error("model null after init")
             withContext(Dispatchers.IO) {
+                m.cleanUp()
                 m.run("Hi.")
                 var i = 0
                 while (i < 4) {
@@ -56,6 +61,7 @@ class MelangeRuntimeImpl(
                     if (r.generatedTokens == 0) break
                     i++
                 }
+                m.cleanUp()
             }
         }
         _isReady.value = true
@@ -70,6 +76,11 @@ class MelangeRuntimeImpl(
         val raw = runMutex.withLock {
             val m = model ?: error("model null")
             withContext(Dispatchers.IO) {
+                // Reset KV cache / conversation state from any prior run
+                // (warmup dummy or previous triage). Without this Zetic's LLM
+                // runtime treats every triage as a multi-turn continuation
+                // and the model responds to whatever was in the buffer last.
+                m.cleanUp()
                 m.run(prompt)
                 // Prompt ends with the JSON prefill `{"severity":"`. Model has
                 // nowhere to write prose — its next token has to be one of the
