@@ -1,280 +1,331 @@
 package com.lahacks2026.pretriage.ui.result
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.LocalHospital
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-
-import com.lahacks2026.pretriage.data.InsurancePlan
-import com.lahacks2026.pretriage.data.DemoScenario
-import androidx.compose.material.icons.filled.Phone
-
 import androidx.compose.ui.graphics.vector.ImageVector
-import com.lahacks2026.pretriage.data.*
-import androidx.compose.material.icons.filled.Phone
-import androidx.compose.material.icons.filled.FileUpload
-import androidx.compose.material.icons.filled.Lock
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.lahacks2026.pretriage.data.IntentHint
+import com.lahacks2026.pretriage.data.SeverityLevel
+import com.lahacks2026.pretriage.data.TriageDecision
+import com.lahacks2026.pretriage.data.InsurancePlan
+import com.lahacks2026.pretriage.ui.components.BrandMark
+import com.lahacks2026.pretriage.ui.components.NoraBtnKind
+import com.lahacks2026.pretriage.ui.components.NoraButton
+import com.lahacks2026.pretriage.ui.components.PrivacyBadge
+import com.lahacks2026.pretriage.ui.theme.NoraColors
+import com.lahacks2026.pretriage.ui.theme.NoraTheme
 
-@OptIn(ExperimentalMaterial3Api::class)
+private data class SeverityMeta(
+    val label: String,
+    val tag: String,
+    val actionTitle: String,
+    val actionIcon: ImageVector,
+    val color: (NoraColors) -> Color,
+)
+
+private fun metaFor(severity: SeverityLevel): SeverityMeta = when (severity) {
+    SeverityLevel.EMERGENCY -> SeverityMeta(
+        label = "Emergency", tag = "Call 911 now",
+        actionTitle = "Call 911",
+        actionIcon = Icons.Default.Phone,
+        color = { it.statusRed },
+    )
+    SeverityLevel.URGENT_CARE -> SeverityMeta(
+        label = "Urgent care", tag = "Go in person today",
+        actionTitle = "Find urgent care",
+        actionIcon = Icons.Default.LocalHospital,
+        color = { it.statusAmber },
+    )
+    SeverityLevel.TELEHEALTH -> SeverityMeta(
+        label = "Telehealth", tag = "Talk to a clinician",
+        actionTitle = "Start video visit",
+        actionIcon = Icons.Default.Phone,
+        color = { it.statusBlue },
+    )
+    SeverityLevel.SELF_CARE -> SeverityMeta(
+        label = "Self-care", tag = "Manage at home",
+        actionTitle = "See self-care tips",
+        actionIcon = Icons.Default.Home,
+        color = { it.statusGreen },
+    )
+}
+
+private fun headlineFor(severity: SeverityLevel): String = when (severity) {
+    SeverityLevel.EMERGENCY -> "Get to an emergency room now."
+    SeverityLevel.URGENT_CARE -> "Worth a same-day in-person visit."
+    SeverityLevel.TELEHEALTH -> "A video visit should sort this out."
+    SeverityLevel.SELF_CARE -> "Rest, fluids, and watch how you feel."
+}
+
 @Composable
 fun ResultScreen(
-    plan: InsurancePlan,
-    scenario: DemoScenario?,
-    onNavigateBack: () -> Unit
+    decision: TriageDecision,
+    plan: InsurancePlan?,
+    isShortCircuit: Boolean,
+    onRestart: () -> Unit,
+    onSendLabs: () -> Unit,
 ) {
-    // Determine content from scenario or use defaults
-    val severityLevel = scenario?.severity ?: SeverityLevel.URGENT_CARE
-    val severity = when (severityLevel) {
-        SeverityLevel.SELF_CARE -> "Self Care"
-        SeverityLevel.TELEHEALTH -> "Telehealth"
-        SeverityLevel.URGENT_CARE -> "Urgent Care Today"
-        SeverityLevel.EMERGENCY -> "EMERGENCY IMMEDIATELY"
-    }
-    val reasoning = scenario?.reasoning ?: "Based on your description, we recommend visiting Urgent Care for an immediate evaluation."
-    
-    val isEmergency = severityLevel == SeverityLevel.EMERGENCY
-    val severityColor = if (isEmergency) MaterialTheme.colorScheme.error else Color(0xFFE67E22)
-    val severityIcon = if (isEmergency) Icons.Default.Warning else Icons.Default.Warning
+    val c = NoraTheme.colors
+    val context = LocalContext.current
+    val meta = metaFor(decision.severity)
+    val sev = meta.color(c)
 
-    val copay = plan.copayFor(severityLevel) ?: 0
-    val redFlags = scenario?.redFlags ?: emptyList()
-    val confidence = scenario?.confidence ?: 0.0
+    val scroll = rememberScrollState()
 
-    var showDeidFlow by remember { mutableStateOf(false) }
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(c.bg)
+            .padding(horizontal = 24.dp)
+            .verticalScroll(scroll),
+    ) {
+        // Top bar
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Box(modifier = Modifier.clickable { onRestart() }) {
+                Text("← Start over", color = c.inkSoft, style = NoraTheme.typography.label)
+            }
+            PrivacyBadge(compact = true)
+        }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Triage Result") },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
-                    }
+        // Severity pill
+        Spacer(Modifier.height(16.dp))
+        SeverityPill(meta, sev)
+
+        // Headline
+        Spacer(Modifier.height(14.dp))
+        Text(
+            text = headlineFor(decision.severity),
+            style = NoraTheme.typography.display,
+            color = c.ink,
+        )
+
+        // What I'm seeing card
+        Spacer(Modifier.height(22.dp))
+        ReasoningCard(decision = decision, isShortCircuit = isShortCircuit)
+
+        // Primary action
+        Spacer(Modifier.height(18.dp))
+        ActionButton(
+            actionTitle = meta.actionTitle,
+            actionIcon = meta.actionIcon,
+            tint = sev,
+            onClick = {
+                runCatching {
+                    val intent = intentFor(decision, plan)
+                    intent?.let { context.startActivity(it) }
                 }
+            },
+        )
+
+        // Optional escalate (urgent or telehealth only)
+        if (decision.severity == SeverityLevel.URGENT_CARE || decision.severity == SeverityLevel.TELEHEALTH) {
+            Spacer(Modifier.height(12.dp))
+            NoraButton(
+                onClick = onSendLabs,
+                kind = NoraBtnKind.Secondary,
+                leadingIcon = {
+                    Icon(Icons.Default.Description, contentDescription = null, tint = c.ink, modifier = Modifier.size(18.dp))
+                },
+            ) { Text("Send my recent labs (de-identified)") }
+        }
+
+        Spacer(Modifier.height(20.dp))
+        Text(
+            "Nora is a guide, not a diagnosis. Trust your gut — if something feels worse than this says, seek care.",
+            color = c.inkMuted,
+            style = NoraTheme.typography.caption,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+@Composable
+private fun SeverityPill(meta: SeverityMeta, sev: Color) {
+    Row(
+        modifier = Modifier
+            .clip(CircleShape)
+            .background(sev.copy(alpha = 0.10f))
+            .border(1.dp, sev.copy(alpha = 0.20f), CircleShape)
+            .padding(start = 10.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(sev),
+        )
+        Text(
+            "${meta.label.uppercase()} · ${meta.tag}",
+            color = sev,
+            style = NoraTheme.typography.label,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+@Composable
+private fun ReasoningCard(decision: TriageDecision, isShortCircuit: Boolean) {
+    val c = NoraTheme.colors
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(c.surface)
+            .border(1.dp, c.border, RoundedCornerShape(16.dp))
+            .padding(18.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            BrandMark(size = 26.dp, bg = c.accentSoft, fg = c.accent)
+            Text(
+                "What I'm seeing",
+                style = NoraTheme.typography.label,
+                color = c.inkSoft,
+                fontWeight = FontWeight.SemiBold,
             )
         }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .padding(padding)
-                .fillMaxSize()
-                .padding(24.dp)
-                .verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(20.dp)
-        ) {
-            // Severity Badge
-            Surface(
-                color = severityColor.copy(alpha = 0.1f),
-                shape = MaterialTheme.shapes.large,
-                border = BoxShadow(severityColor) // Not a real thing, using border
-            ) {
-                Column(
-                    modifier = Modifier.padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Icon(
-                        severityIcon,
-                        contentDescription = null,
-                        tint = severityColor,
-                        modifier = Modifier.size(48.dp)
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        severity,
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = severityColor
-                    )
-                }
-            }
+        Spacer(Modifier.height(8.dp))
+        Text(decision.reasoning, style = NoraTheme.typography.body, color = c.ink)
 
-            Text(
-                "Reasoning",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Text(
-                reasoning,
-                style = MaterialTheme.typography.bodyLarge,
-                lineHeight = 24.sp,
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            if (redFlags.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    "Detected Red Flags",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                redFlags.forEach { flag ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        if (decision.redFlags.isNotEmpty()) {
+            Spacer(Modifier.height(14.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                decision.redFlags.take(3).forEach { rf ->
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(c.surfaceAlt)
+                            .border(1.dp, c.border, CircleShape)
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
                     ) {
-                        Icon(
-                            Icons.Default.Warning,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Text(
-                            flag,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onErrorContainer
-                        )
+                        Text(rf.label.replace("_", " "), color = c.inkSoft, style = NoraTheme.typography.caption)
                     }
                 }
             }
+        }
 
-            Divider(modifier = Modifier.padding(vertical = 8.dp))
-
-            // Action Card (Insurance Routed or Emergency)
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (isEmergency) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
-                )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        if (isEmergency) "IMMEDIATE ACTION REQUIRED" else "Recommended Action (${plan.name})",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = if (isEmergency) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                    Text(
-                        if (isEmergency) "Call 911 or visit the nearest Emergency Room immediately." 
-                        else "Use '${plan.urgentCareNetworkQuery}' for in-network care. Your copay is $${copay}.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (isEmergency) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
-                    val buttonText = when {
-                        isEmergency -> "CALL 911 NOW"
-                        severityLevel == SeverityLevel.TELEHEALTH -> "Start Video Visit"
-                        else -> "Open Directions"
-                    }
-                    
-                    Button(
-                        onClick = { /* TODO: Dialer or Maps/URL */ },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = if (isEmergency) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error) else ButtonDefaults.buttonColors()
-                    ) {
-                        if (isEmergency) {
-                            Icon(Icons.Default.Phone, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                        }
-                        Text(buttonText)
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // De-identification Escalation
-            OutlinedCard(
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Secure Escalation", style = MaterialTheme.typography.titleSmall)
-                    }
-                    Text(
-                        "Need to share records with a doctor? Our privacy loop scrubs your identity on-device before sending.",
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(vertical = 8.dp)
-                    )
-                    
-                    if (!showDeidFlow) {
-                        Button(
-                            onClick = { showDeidFlow = true },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
-                        ) {
-                            Icon(Icons.Default.FileUpload, contentDescription = null)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Share De-identified Records")
-                        }
-                    } else {
-                        // Simulated De-id Progress
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                            Text("Anonymizing [PATIENT_NAME]...", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
-                            Text("Sent securely to provider.", color = Color(0xFF27AE60), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.weight(1f))
-
-            // AI Confidence Meter
-            if (confidence > 0) {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("AI Confidence", style = MaterialTheme.typography.labelSmall)
-                        Text("${(confidence * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                    }
-                    LinearProgressIndicator(
-                        progress = confidence.toFloat(),
-                        modifier = Modifier.fillMaxWidth().height(4.dp),
-                        color = if (confidence > 0.9) Color(0xFF27AE60) else if (confidence > 0.7) Color(0xFFF1C40F) else MaterialTheme.colorScheme.error,
-                        trackColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-
-            // Privacy Footnote
+        Spacer(Modifier.height(12.dp))
+        if (isShortCircuit) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Icon(
-                    Icons.Default.CheckCircle,
-                    contentDescription = null,
-                    tint = Color(0xFF27AE60),
-                    modifier = Modifier.size(16.dp)
-                )
+                Icon(Icons.Default.Warning, contentDescription = null, tint = c.statusRed, modifier = Modifier.size(12.dp))
                 Text(
-                    "Result generated locally & privately.",
-                    style = MaterialTheme.typography.labelSmall
+                    "Safety rule fired — bypassed model",
+                    color = c.statusRed,
+                    style = NoraTheme.typography.mono,
+                )
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("MedGemma · on-device", color = c.inkMuted, style = NoraTheme.typography.mono)
+                Text(
+                    "confidence ${"%.2f".format(decision.confidence)}",
+                    color = c.inkMuted,
+                    style = NoraTheme.typography.mono,
                 )
             }
         }
     }
 }
 
-// Helper to make it look nicer since BoxShadow isn't standard in M3 easily
 @Composable
-private fun BoxShadow(color: Color) = androidx.compose.foundation.BorderStroke(2.dp, color)
+private fun ActionButton(
+    actionTitle: String,
+    actionIcon: ImageVector,
+    tint: Color,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(18.dp))
+            .background(tint)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 22.dp, vertical = 18.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.White.copy(alpha = 0.22f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(actionIcon, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
+            }
+            Column {
+                Text(actionTitle, color = Color.White, style = NoraTheme.typography.title, fontWeight = FontWeight.SemiBold)
+                Text("One tap", color = Color.White.copy(alpha = 0.85f), style = NoraTheme.typography.caption)
+            }
+        }
+        Icon(Icons.Default.ArrowForward, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+    }
+}
+
+private fun intentFor(decision: TriageDecision, plan: InsurancePlan?): Intent? {
+    return when (decision.recommendedAction.intentHint) {
+        IntentHint.DIAL_911 -> Intent(Intent.ACTION_DIAL, Uri.parse("tel:911"))
+        IntentHint.MAPS_QUERY_URGENT_CARE -> {
+            val q = plan?.urgentCareNetworkQuery ?: "urgent care near me"
+            Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=${Uri.encode(q)}"))
+        }
+        IntentHint.OPEN_TELEHEALTH_DEEP_LINK -> {
+            val link = plan?.telehealthDeepLink ?: "https://teladoc.com"
+            Intent(Intent.ACTION_VIEW, Uri.parse(link))
+        }
+        IntentHint.SHOW_SELF_CARE_TEXT -> null
+    }
+}
