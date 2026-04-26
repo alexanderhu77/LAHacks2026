@@ -23,7 +23,9 @@ import kotlinx.coroutines.withContext
 
 private const val TAG = "MelangeRuntime"
 private const val MODEL_ID = "Steve/Qwen3.5-2B"
-private const val MAX_OUTPUT_TOKENS = 220
+private const val MAX_OUTPUT_TOKENS = 180
+
+private const val PROMPT_PREFILL_TAIL = "{\"severity\":\""
 
 class MelangeRuntimeImpl(
     private val context: Context
@@ -69,10 +71,11 @@ class MelangeRuntimeImpl(
             val m = model ?: error("model null")
             withContext(Dispatchers.IO) {
                 m.run(prompt)
-                // Prompt ends with "{" so the model continues from inside an open
-                // JSON object. Seed the buffer with "{" so depth-counting + parser
-                // see a well-formed object.
-                val sb = StringBuilder("{")
+                // Prompt ends with the JSON prefill `{"severity":"`. Model has
+                // nowhere to write prose — its next token has to be one of the
+                // four enum values. Seed the buffer with the same prefill so
+                // depth counting + JSON parser see a complete object.
+                val sb = StringBuilder(PROMPT_PREFILL_TAIL)
                 var count = 0
                 while (count < MAX_OUTPUT_TOKENS) {
                     val r = m.waitForNextToken()
@@ -123,26 +126,33 @@ class MelangeRuntimeImpl(
     }
 
     private fun buildPrompt(req: TriageRequest): String = buildString {
-        // Qwen3 chat template. Two non-obvious bits:
-        //   1. Empty <think>\n\n</think> after the assistant turn is Qwen3's
-        //      documented "no-think" idiom — disables chain-of-thought so we
-        //      don't burn tokens on prose. Without this Qwen3 reasoning kicks
-        //      in by default and rambles past our token cap.
-        //   2. Trailing "{" prefills the assistant's response into an open
-        //      JSON object, so the model has nowhere to go but JSON content.
-        //      The "{" is seeded into the output buffer in triage() so the
-        //      parser sees a balanced object.
-        append("<|im_start|>system\n")
+        // Plain text-completion prompt. We tried Qwen3 chat tags + <think>
+        // skip on the previous push - they had no effect because Zetic's
+        // runtime treats the prompt as raw text and does not apply a chat
+        // template, so the special tokens were just noise to the model.
+        //
+        // Strategy now: few-shot pattern matching. Three example transcripts
+        // paired with their JSON outputs teach the model the output shape.
+        // The prompt then ends mid-JSON at `{"severity":"` so the model's
+        // next token must be one of the four enum values - prose is
+        // structurally impossible. Seeded into the output buffer in triage()
+        // so the parser sees a complete object.
         append(Prompts.MEDGEMMA_SYSTEM_PROMPT.trim())
-        append("<|im_end|>\n")
-        append("<|im_start|>user\n")
-        append("Symptom description: \"")
+        append("\n\nExamples (output ONLY the JSON object, nothing else):\n\n")
+
+        append("Symptoms: \"My finger is cut and won't stop bleeding.\"\n")
+        append("JSON: {\"severity\":\"URGENT_CARE\",\"reasoning\":\"Bleeding that won't stop needs same-day in-person evaluation.\",\"red_flags\":[\"persistent bleeding\"],\"recommended_action\":{\"provider\":\"Urgent care clinic\",\"intent_hint\":\"MAPS_QUERY_URGENT_CARE\"},\"confidence\":0.85}\n\n")
+
+        append("Symptoms: \"Mild sore throat for two days.\"\n")
+        append("JSON: {\"severity\":\"SELF_CARE\",\"reasoning\":\"Mild sore throats typically resolve at home with rest and fluids.\",\"red_flags\":[],\"recommended_action\":{\"provider\":\"Self-care guidance\",\"intent_hint\":\"SHOW_SELF_CARE_TEXT\"},\"confidence\":0.80}\n\n")
+
+        append("Symptoms: \"My five-year-old's eye is red and goopy.\"\n")
+        append("JSON: {\"severity\":\"TELEHEALTH\",\"reasoning\":\"Pediatric pink eye can be diagnosed and treated by video visit.\",\"red_flags\":[],\"recommended_action\":{\"provider\":\"Pediatric telehealth\",\"intent_hint\":\"OPEN_TELEHEALTH_DEEP_LINK\"},\"confidence\":0.80}\n\n")
+
+        append("Symptoms: \"")
         append(req.transcript.ifBlank { "(none provided)" })
-        append("\"\n\nClassify this into a routing tier and emit the JSON. JSON only.")
-        append("<|im_end|>\n")
-        append("<|im_start|>assistant\n")
-        append("<think>\n\n</think>\n\n")
-        append("{")
+        append("\"\nJSON: ")
+        append(PROMPT_PREFILL_TAIL)
     }
 
     private fun looksLikeCompletedJson(sb: StringBuilder): Boolean {
