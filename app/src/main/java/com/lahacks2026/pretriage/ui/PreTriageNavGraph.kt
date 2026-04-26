@@ -72,14 +72,18 @@ fun PreTriageNavGraph(
         composable(Routes.Intake) {
             IntakeScreen(
                 transcript = state.intake.transcript,
+                hasImage = state.image != null,
                 onTranscriptChange = viewModel::setTranscript,
                 onContinue = {
-                    if (mentionsImageySymptom(state.intake.transcript)) {
+                    if (mentionsImageySymptom(state.intake.transcript) && state.image == null) {
                         navController.navigate(Routes.CameraOffer)
                     } else {
                         viewModel.runTriage()
                         navController.navigate(Routes.Triaging)
                     }
+                },
+                onCamera = {
+                    navController.navigate(Routes.CameraCapture)
                 },
                 onEmergencyShortCircuit = {
                     viewModel.runTriage()
@@ -169,7 +173,9 @@ fun PreTriageNavGraph(
 
 private val IMAGEY_KEYWORDS = listOf(
     "rash", "mole", "bump", "spot", "skin", "wound", "cut", "scrape",
-    "eye", "swelling", "swollen", "bruise", "redness", "lesion",
+    "eye", "swelling", "swollen", "bruise", "redness", "lesion", "burn",
+    "bite", "sting", "mark", "scab", "blister", "ulcer", "patch", "lump",
+    "discoloration", "injury", "blood", "bleed", "broken",
 )
 
 private fun mentionsImageySymptom(transcript: String): Boolean {

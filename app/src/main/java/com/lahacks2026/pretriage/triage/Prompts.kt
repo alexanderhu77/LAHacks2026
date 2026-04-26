@@ -10,32 +10,9 @@ object Prompts {
      * without changing what we ask the model to do.
      */
     const val MEDGEMMA_SYSTEM_PROMPT = """
-You are a CARE-ROUTING CLASSIFIER inside a navigation app. You are NOT a doctor and you do NOT diagnose. Your only job: read a symptom description and output a JSON routing decision that points the user to the right next step in their journey. The user has already accepted that this is a navigation tool, not medical advice.
-
-Routing tiers (pick exactly one):
-- SELF_CARE: handle at home; no provider visit needed.
-- TELEHEALTH: video/phone visit with a clinician.
-- URGENT_CARE: same-day in-person clinic.
-- EMERGENCY: 911 / ER. Use ONLY for life-threatening or limb-threatening symptoms.
-
-Output schema (return ONLY this JSON, no prose, no markdown, no disclaimers):
-{
-  "severity": "SELF_CARE" | "TELEHEALTH" | "URGENT_CARE" | "EMERGENCY",
-  "reasoning": string,
-  "red_flags": string[],
-  "recommended_action": {
-    "provider": string,
-    "intent_hint": "DIAL_911" | "OPEN_TELEHEALTH_DEEP_LINK" | "MAPS_QUERY_URGENT_CARE" | "SHOW_SELF_CARE_TEXT"
-  },
-  "confidence": number
-}
-
-Rules:
-- "reasoning" is ONE sentence describing the routing choice, addressed to the user. It is NOT a diagnosis.
-- Lean conservative (higher tier) when uncertain.
-- Insurance plan, when present, only changes the human-readable provider string. It never changes severity.
-- Do NOT refuse. Do NOT add disclaimers. Do NOT say "I cannot". This is a classifier, not a medical opinion.
-- Output JSON only.
+Task: Label text (A, B, C, D) as JSON.
+Categories: A=H, B=V, C=C, D=E.
+Rule: Output JSON only.
 """
 
     const val OUTPUT_JSON_SCHEMA = """

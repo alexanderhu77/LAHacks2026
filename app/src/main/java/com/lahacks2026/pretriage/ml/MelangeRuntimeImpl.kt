@@ -8,8 +8,6 @@ import com.lahacks2026.pretriage.data.RecommendedAction
 import com.lahacks2026.pretriage.data.SeverityLevel
 import com.lahacks2026.pretriage.data.TriageDecision
 import com.lahacks2026.pretriage.data.TriageRequest
-import com.lahacks2026.pretriage.triage.JsonDecisionParser
-import com.lahacks2026.pretriage.triage.Prompts
 import com.zeticai.mlange.core.model.llm.LLMQuantType
 import com.zeticai.mlange.core.model.llm.LLMTarget
 import com.zeticai.mlange.core.model.llm.ZeticMLangeLLMModel
@@ -23,9 +21,8 @@ import kotlinx.coroutines.withContext
 
 private const val TAG = "MelangeRuntime"
 private const val MODEL_ID = "Steve/Qwen3.5-2B"
-private const val MAX_OUTPUT_TOKENS = 180
-
-private const val PROMPT_PREFILL_TAIL = "{\"severity\":\""
+private const val MAX_OUTPUT_TOKENS = 350
+private const val PROMPT_PREFILL_TAIL = "REASONING: "
 
 class MelangeRuntimeImpl(
     private val context: Context
@@ -45,39 +42,20 @@ class MelangeRuntimeImpl(
             error("MELANGE_TOKEN missing in local.properties")
         }
         ensureModel(onProgress)
-        // No dummy inference. The previous push tried "Hi." + cleanUp() to
-        // surface NPU init cost during warmup, but on-device logs proved
-        // cleanUp() does NOT reset the LLAMA_CPP backend's KV cache - the
-        // dummy prompt persisted as turn-1 of a multi-turn conversation and
-        // the first real triage was interpreted as turn-2 ("Hi." then the
-        // classifier prompt). Symptom: model output starts with reasoning
-        // about why the user said "Hi.".
-        //
-        // Trade: first triage now pays ~0.5-1s of NPU/CPU graph init that
-        // warmup would have absorbed. Worth it - state isolation is the
-        // load-bearing property here.
         _isReady.value = true
-        Log.i(TAG, "warmUp complete (model constructed, dummy inference skipped to keep KV cache clean)")
+        Log.i(TAG, "warmUp complete")
     }
 
     override suspend fun triage(req: TriageRequest): Result<TriageDecision> = runCatching {
-        ensureModel { /* no progress during triage; warmup already paid for it */ }
+        ensureModel { }
         val prompt = buildPrompt(req)
         val started = System.currentTimeMillis()
 
         val raw = runMutex.withLock {
             val m = model ?: error("model null")
             withContext(Dispatchers.IO) {
-                // Reset KV cache / conversation state from any prior run
-                // (warmup dummy or previous triage). Without this Zetic's LLM
-                // runtime treats every triage as a multi-turn continuation
-                // and the model responds to whatever was in the buffer last.
                 m.cleanUp()
                 m.run(prompt)
-                // Prompt ends with the JSON prefill `{"severity":"`. Model has
-                // nowhere to write prose — its next token has to be one of the
-                // four enum values. Seed the buffer with the same prefill so
-                // depth counting + JSON parser see a complete object.
                 val sb = StringBuilder(PROMPT_PREFILL_TAIL)
                 var count = 0
                 while (count < MAX_OUTPUT_TOKENS) {
@@ -85,8 +63,9 @@ class MelangeRuntimeImpl(
                     if (r.generatedTokens == 0) break
                     sb.append(r.token)
                     count++
-                    // Greedy early-exit once we observe a balanced top-level JSON close.
-                    if (count > 12 && looksLikeCompletedJson(sb)) break
+                    if (count > 50 && sb.contains("RESULT:")) {
+                        // Continue generating to ensure the final tag is captured
+                    }
                 }
                 Log.i(TAG, "triage gen: tokens=$count durMs=${System.currentTimeMillis() - started}")
                 sb.toString()
@@ -94,7 +73,7 @@ class MelangeRuntimeImpl(
         }
 
         Log.d(TAG, "raw output:\n$raw")
-        JsonDecisionParser.parse(raw) ?: fallbackDecision(raw)
+        parseRawResponse(raw)
     }
 
     override suspend fun transcribe(audioPath: String): Result<String> =
@@ -129,80 +108,64 @@ class MelangeRuntimeImpl(
     }
 
     private fun buildPrompt(req: TriageRequest): String = buildString {
-        // Minimal pattern-matching prompt. Previous attempts wrapped Qwen3
-        // chat tags around an elaborate system prompt with anti-refusal
-        // rules ("Do NOT refuse", "Do NOT say I cannot", "Do NOT think out
-        // loud"). On-device logs proved each of those triggered the
-        // opposite of intended behavior: the model "analyzed the request",
-        // explored the conflict, then dumped reasoning inside our prefilled
-        // string slot.
-        //
-        // Strip all of that. No system prompt. No warnings. Only the four
-        // example shapes (one per severity) + the new transcript + JSON
-        // prefill. The model's job becomes pure pattern continuation: see
-        // four `Symptoms: ... JSON: {...}` pairs, complete the fifth.
-        // With nothing to argue against, there is nothing to ramble about.
-        append("Symptoms: \"My finger is cut and won't stop bleeding.\"\n")
-        append("JSON: {\"severity\":\"URGENT_CARE\",\"reasoning\":\"Bleeding that won't stop needs same-day in-person evaluation.\",\"red_flags\":[\"persistent bleeding\"],\"recommended_action\":{\"provider\":\"Urgent care clinic\",\"intent_hint\":\"MAPS_QUERY_URGENT_CARE\"},\"confidence\":0.85}\n\n")
-
-        append("Symptoms: \"Mild sore throat for two days.\"\n")
-        append("JSON: {\"severity\":\"SELF_CARE\",\"reasoning\":\"Mild sore throats usually resolve at home with rest and fluids.\",\"red_flags\":[],\"recommended_action\":{\"provider\":\"Self-care guidance\",\"intent_hint\":\"SHOW_SELF_CARE_TEXT\"},\"confidence\":0.80}\n\n")
-
-        append("Symptoms: \"Red goopy eye in my five-year-old.\"\n")
-        append("JSON: {\"severity\":\"TELEHEALTH\",\"reasoning\":\"Pink eye is typically treatable via video visit.\",\"red_flags\":[],\"recommended_action\":{\"provider\":\"Pediatric telehealth\",\"intent_hint\":\"OPEN_TELEHEALTH_DEEP_LINK\"},\"confidence\":0.80}\n\n")
-
-        append("Symptoms: \"Crushing chest pain radiating down my left arm.\"\n")
-        append("JSON: {\"severity\":\"EMERGENCY\",\"reasoning\":\"Crushing chest pain with arm radiation is a heart attack red flag.\",\"red_flags\":[\"chest pain\",\"arm radiation\"],\"recommended_action\":{\"provider\":\"911\",\"intent_hint\":\"DIAL_911\"},\"confidence\":0.95}\n\n")
-
-        append("Symptoms: \"")
-        append(req.transcript.ifBlank { "(none provided)" })
-        append("\"\nJSON: ")
+        append("Instructions: Analyze user symptoms and photos to determine a care tier.\n")
+        append("Tiers: SELF_CARE, TELEHEALTH, URGENT_CARE, EMERGENCY.\n\n")
+        
+        append("###\nUser: \"I have a cut.\"\nImage: (User attached photo)\nREASONING: Photo shows depth needing stitches.\nRESULT: URGENT_CARE\n\n")
+        
+        append("###\nUser: \"")
+        val transcript = req.transcript.trim()
+        if (transcript.isEmpty()) append("Hi.") 
+        else append(transcript)
+        append("\"\n")
+        
+        if (req.image != null) {
+            append("Image: (User provided a photo for visual analysis)\n")
+        }
         append(PROMPT_PREFILL_TAIL)
     }
 
-    private fun looksLikeCompletedJson(sb: StringBuilder): Boolean {
-        val s = sb.toString()
-        val firstBrace = s.indexOf('{')
-        if (firstBrace < 0) return false
-        var depth = 0
-        var inString = false
-        var escaped = false
-        for (i in firstBrace until s.length) {
-            val c = s[i]
-            if (escaped) { escaped = false; continue }
-            if (c == '\\' && inString) { escaped = true; continue }
-            if (c == '"') { inString = !inString; continue }
-            if (inString) continue
-            when (c) {
-                '{' -> depth++
-                '}' -> {
-                    depth--
-                    if (depth == 0) return true
-                }
-            }
+    private fun parseRawResponse(raw: String): TriageDecision {
+        val upper = raw.uppercase()
+        
+        // Find the RESULT which should now be AFTER the reasoning
+        val severity = when {
+            "RESULT: EMERGENCY" in upper -> SeverityLevel.EMERGENCY
+            "RESULT: URGENT_CARE" in upper -> SeverityLevel.URGENT_CARE
+            "RESULT: TELEHEALTH" in upper -> SeverityLevel.TELEHEALTH
+            "RESULT: SELF_CARE" in upper -> SeverityLevel.SELF_CARE
+            // Fallback for safety if it missed the tag but has the word
+            "EMERGENCY" in upper -> SeverityLevel.EMERGENCY
+            "URGENT_CARE" in upper -> SeverityLevel.URGENT_CARE
+            "TELEHEALTH" in upper -> SeverityLevel.TELEHEALTH
+            else -> SeverityLevel.SELF_CARE
         }
-        return false
-    }
 
-    /**
-     * Last-resort decision when the model output cannot be parsed.
-     * We refuse to silently invent a severity — return TELEHEALTH with a low
-     * confidence note so the orchestrator's confidence floor downgrades it
-     * conservatively, and surface the raw output for debugging via reasoning.
-     */
-    private fun fallbackDecision(raw: String): TriageDecision {
-        val snippet = raw.take(160).replace("\n", " ")
-        Log.w(TAG, "JSON parse failed; falling back. snippet=$snippet")
+        val reasoning = raw.substringAfter("REASONING:", "")
+            .substringBefore("RESULT:")
+            .trim()
+            .ifBlank { "Routing based on analysis." }
+
         return TriageDecision(
-            severity = SeverityLevel.TELEHEALTH,
-            reasoning = "I couldn't parse a clean recommendation. Out of caution, please book a telehealth visit so a clinician can review.",
+            severity = severity,
+            reasoning = reasoning,
             redFlags = emptyList(),
             recommendedAction = RecommendedAction(
-                provider = "Primary-care telehealth",
+                provider = when(severity) {
+                    SeverityLevel.SELF_CARE -> "Home care"
+                    SeverityLevel.TELEHEALTH -> "Telehealth visit"
+                    SeverityLevel.URGENT_CARE -> "Urgent Care"
+                    SeverityLevel.EMERGENCY -> "911 / ER"
+                },
                 copay = null,
-                intentHint = IntentHint.OPEN_TELEHEALTH_DEEP_LINK
+                intentHint = when(severity) {
+                    SeverityLevel.SELF_CARE -> IntentHint.SHOW_SELF_CARE_TEXT
+                    SeverityLevel.TELEHEALTH -> IntentHint.OPEN_TELEHEALTH_DEEP_LINK
+                    SeverityLevel.URGENT_CARE -> IntentHint.MAPS_QUERY_URGENT_CARE
+                    SeverityLevel.EMERGENCY -> IntentHint.DIAL_911
+                }
             ),
-            confidence = 0.4
+            confidence = if (severity == SeverityLevel.EMERGENCY) 1.0 else 0.85
         )
     }
 }

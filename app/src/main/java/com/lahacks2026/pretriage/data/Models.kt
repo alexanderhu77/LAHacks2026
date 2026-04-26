@@ -17,6 +17,7 @@ enum class SeverityLevel {
 data class TriageRequest(
     val transcript: String,
     val imageUri: String? = null,
+    val image: android.graphics.Bitmap? = null,
     val plan: InsurancePlan? = null
 )
 

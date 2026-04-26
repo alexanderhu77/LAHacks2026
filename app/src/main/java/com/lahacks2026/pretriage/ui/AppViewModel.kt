@@ -132,6 +132,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val req = TriageRequest(
                 transcript = s.intake.transcript,
                 imageUri = null,
+                image = s.image,
                 plan = s.plan,
             )
             val result = orchestrator.triage(req)

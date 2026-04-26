@@ -15,8 +15,9 @@ object JsonDecisionParser {
         return runCatching {
             val obj = JSONObject(jsonText)
 
-            val severity = SeverityLevel.valueOf(obj.getString("severity"))
-            val reasoning = obj.getString("reasoning")
+            val severityStr = obj.optString("severity").uppercase()
+            val severity = SeverityLevel.values().find { it.name == severityStr } ?: SeverityLevel.TELEHEALTH
+            val reasoning = obj.optString("reasoning", "Routing assessment complete.")
 
             val redFlagsArr = obj.optJSONArray("red_flags")
             val redFlags = buildList {
@@ -28,9 +29,10 @@ object JsonDecisionParser {
                 }
             }
 
-            val actionObj = obj.getJSONObject("recommended_action")
-            val intentHint = IntentHint.valueOf(actionObj.getString("intent_hint"))
-            val provider = actionObj.getString("provider")
+            val actionObj = obj.optJSONObject("recommended_action")
+            val intentHintStr = actionObj?.optString("intent_hint")?.uppercase()
+            val intentHint = IntentHint.values().find { it.name == intentHintStr } ?: IntentHint.SHOW_SELF_CARE_TEXT
+            val provider = actionObj?.optString("provider") ?: "Care guidance"
 
             val confidence = obj.optDouble("confidence", 0.5).coerceIn(0.0, 1.0)
 

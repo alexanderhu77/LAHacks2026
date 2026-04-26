@@ -26,7 +26,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material.icons.filled.ArrowForward
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Mic
@@ -86,8 +88,10 @@ private sealed interface MicState {
 @Composable
 fun IntakeScreen(
     transcript: String,
+    hasImage: Boolean,
     onTranscriptChange: (String) -> Unit,
     onContinue: () -> Unit,
+    onCamera: () -> Unit,
     onEmergencyShortCircuit: () -> Unit,
 ) {
     val c = NoraTheme.colors
@@ -272,14 +276,24 @@ fun IntakeScreen(
                 leadingIcon = {
                     Icon(Icons.Default.Keyboard, contentDescription = null, tint = c.ink, modifier = Modifier.size(18.dp))
                 },
-            ) { Text("Type instead") }
+            ) { Text("Type") }
+            NoraButton(
+                onClick = onCamera,
+                modifier = Modifier.weight(1f),
+                kind = NoraBtnKind.Secondary,
+                leadingIcon = {
+                    val icon = if (hasImage) Icons.Default.Check else Icons.Default.AddAPhoto
+                    val tint = if (hasImage) c.statusGreen else c.ink
+                    Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(18.dp))
+                },
+            ) { Text(if (hasImage) "Photo added" else "Add photo") }
             NoraButton(
                 onClick = onContinue,
                 modifier = Modifier.weight(1f),
                 leadingIcon = {
                     Icon(Icons.Default.ArrowForward, contentDescription = null, tint = c.onAccent, modifier = Modifier.size(18.dp))
                 },
-            ) { Text("Continue") }
+            ) { Text("Go") }
         }
         Spacer(Modifier.height(12.dp))
     }
