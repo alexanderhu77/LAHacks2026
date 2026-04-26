@@ -8,6 +8,7 @@ import com.lahacks2026.pretriage.data.RecommendedAction
 import com.lahacks2026.pretriage.data.SeverityLevel
 import com.lahacks2026.pretriage.data.TriageDecision
 import com.lahacks2026.pretriage.data.TriageRequest
+import com.lahacks2026.pretriage.ml.clip.ClipImageEncoder
 import com.zeticai.mlange.core.model.llm.LLMQuantType
 import com.zeticai.mlange.core.model.llm.LLMTarget
 import com.zeticai.mlange.core.model.llm.ZeticMLangeLLMModel
@@ -56,6 +57,25 @@ class MelangeRuntimeImpl(
 
     override suspend fun triage(req: TriageRequest): Result<TriageDecision> = runCatching {
         ensureModel { }
+
+        // Probe push: if a photo is attached, run CLIP image encoder and log
+        // the embedding shape + L2 norm. We don't yet feed the result into
+        // the prompt - the next push adds zero-shot classification with
+        // cached label embeddings. Wrapped in runCatching so a CLIP load
+        // failure or shape mismatch can't break the working text triage.
+        req.image?.let { bitmap ->
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val encoder = ClipImageEncoder(context)
+                    try {
+                        encoder.encode(bitmap)
+                    } finally {
+                        encoder.close()
+                    }
+                }
+            }.onFailure { Log.w(TAG, "CLIP probe failed; ignoring", it) }
+        }
+
         val prompt = buildPrompt(req)
         val started = System.currentTimeMillis()
 
