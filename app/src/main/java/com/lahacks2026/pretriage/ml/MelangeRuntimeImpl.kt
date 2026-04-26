@@ -129,28 +129,30 @@ class MelangeRuntimeImpl(
     }
 
     private fun buildPrompt(req: TriageRequest): String = buildString {
-        // Plain text-completion prompt. We tried Qwen3 chat tags + <think>
-        // skip on the previous push - they had no effect because Zetic's
-        // runtime treats the prompt as raw text and does not apply a chat
-        // template, so the special tokens were just noise to the model.
+        // Minimal pattern-matching prompt. Previous attempts wrapped Qwen3
+        // chat tags around an elaborate system prompt with anti-refusal
+        // rules ("Do NOT refuse", "Do NOT say I cannot", "Do NOT think out
+        // loud"). On-device logs proved each of those triggered the
+        // opposite of intended behavior: the model "analyzed the request",
+        // explored the conflict, then dumped reasoning inside our prefilled
+        // string slot.
         //
-        // Strategy now: few-shot pattern matching. Three example transcripts
-        // paired with their JSON outputs teach the model the output shape.
-        // The prompt then ends mid-JSON at `{"severity":"` so the model's
-        // next token must be one of the four enum values - prose is
-        // structurally impossible. Seeded into the output buffer in triage()
-        // so the parser sees a complete object.
-        append(Prompts.MEDGEMMA_SYSTEM_PROMPT.trim())
-        append("\n\nExamples (output ONLY the JSON object, nothing else):\n\n")
-
+        // Strip all of that. No system prompt. No warnings. Only the four
+        // example shapes (one per severity) + the new transcript + JSON
+        // prefill. The model's job becomes pure pattern continuation: see
+        // four `Symptoms: ... JSON: {...}` pairs, complete the fifth.
+        // With nothing to argue against, there is nothing to ramble about.
         append("Symptoms: \"My finger is cut and won't stop bleeding.\"\n")
         append("JSON: {\"severity\":\"URGENT_CARE\",\"reasoning\":\"Bleeding that won't stop needs same-day in-person evaluation.\",\"red_flags\":[\"persistent bleeding\"],\"recommended_action\":{\"provider\":\"Urgent care clinic\",\"intent_hint\":\"MAPS_QUERY_URGENT_CARE\"},\"confidence\":0.85}\n\n")
 
         append("Symptoms: \"Mild sore throat for two days.\"\n")
-        append("JSON: {\"severity\":\"SELF_CARE\",\"reasoning\":\"Mild sore throats typically resolve at home with rest and fluids.\",\"red_flags\":[],\"recommended_action\":{\"provider\":\"Self-care guidance\",\"intent_hint\":\"SHOW_SELF_CARE_TEXT\"},\"confidence\":0.80}\n\n")
+        append("JSON: {\"severity\":\"SELF_CARE\",\"reasoning\":\"Mild sore throats usually resolve at home with rest and fluids.\",\"red_flags\":[],\"recommended_action\":{\"provider\":\"Self-care guidance\",\"intent_hint\":\"SHOW_SELF_CARE_TEXT\"},\"confidence\":0.80}\n\n")
 
-        append("Symptoms: \"My five-year-old's eye is red and goopy.\"\n")
-        append("JSON: {\"severity\":\"TELEHEALTH\",\"reasoning\":\"Pediatric pink eye can be diagnosed and treated by video visit.\",\"red_flags\":[],\"recommended_action\":{\"provider\":\"Pediatric telehealth\",\"intent_hint\":\"OPEN_TELEHEALTH_DEEP_LINK\"},\"confidence\":0.80}\n\n")
+        append("Symptoms: \"Red goopy eye in my five-year-old.\"\n")
+        append("JSON: {\"severity\":\"TELEHEALTH\",\"reasoning\":\"Pink eye is typically treatable via video visit.\",\"red_flags\":[],\"recommended_action\":{\"provider\":\"Pediatric telehealth\",\"intent_hint\":\"OPEN_TELEHEALTH_DEEP_LINK\"},\"confidence\":0.80}\n\n")
+
+        append("Symptoms: \"Crushing chest pain radiating down my left arm.\"\n")
+        append("JSON: {\"severity\":\"EMERGENCY\",\"reasoning\":\"Crushing chest pain with arm radiation is a heart attack red flag.\",\"red_flags\":[\"chest pain\",\"arm radiation\"],\"recommended_action\":{\"provider\":\"911\",\"intent_hint\":\"DIAL_911\"},\"confidence\":0.95}\n\n")
 
         append("Symptoms: \"")
         append(req.transcript.ifBlank { "(none provided)" })
