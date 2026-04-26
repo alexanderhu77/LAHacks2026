@@ -45,27 +45,19 @@ class MelangeRuntimeImpl(
             error("MELANGE_TOKEN missing in local.properties")
         }
         ensureModel(onProgress)
-        // Dummy inference to surface NPU/CPU init cost during warmup, not first
-        // triage. cleanUp() before AND after — Zetic's LLM runtime retains KV
-        // cache / conversation state across .run() calls, so without these the
-        // dummy "Hi." would leak into the next triage prompt and the model
-        // would respond as if the user actually said hello.
-        runMutex.withLock {
-            val m = model ?: error("model null after init")
-            withContext(Dispatchers.IO) {
-                m.cleanUp()
-                m.run("Hi.")
-                var i = 0
-                while (i < 4) {
-                    val r = m.waitForNextToken()
-                    if (r.generatedTokens == 0) break
-                    i++
-                }
-                m.cleanUp()
-            }
-        }
+        // No dummy inference. The previous push tried "Hi." + cleanUp() to
+        // surface NPU init cost during warmup, but on-device logs proved
+        // cleanUp() does NOT reset the LLAMA_CPP backend's KV cache - the
+        // dummy prompt persisted as turn-1 of a multi-turn conversation and
+        // the first real triage was interpreted as turn-2 ("Hi." then the
+        // classifier prompt). Symptom: model output starts with reasoning
+        // about why the user said "Hi.".
+        //
+        // Trade: first triage now pays ~0.5-1s of NPU/CPU graph init that
+        // warmup would have absorbed. Worth it - state isolation is the
+        // load-bearing property here.
         _isReady.value = true
-        Log.i(TAG, "warmUp complete")
+        Log.i(TAG, "warmUp complete (model constructed, dummy inference skipped to keep KV cache clean)")
     }
 
     override suspend fun triage(req: TriageRequest): Result<TriageDecision> = runCatching {
