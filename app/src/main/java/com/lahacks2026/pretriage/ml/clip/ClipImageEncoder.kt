@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
 import com.lahacks2026.pretriage.BuildConfig
+import com.zeticai.mlange.core.model.ModelMode
 import com.zeticai.mlange.core.model.ZeticMLangeModel
 import com.zeticai.mlange.core.tensor.Tensor
 import java.nio.ByteOrder
@@ -20,10 +21,14 @@ import java.nio.ByteOrder
  */
 class ClipImageEncoder(context: Context) {
 
+    // RUN_ACCURACY per Zetic's "Choosing the Right Mode" docs: medical image
+    // analysis prioritizes precision over latency. CLIP scoring is only run
+    // once per triage (not per frame), so the small latency cost is acceptable.
     private val model = ZeticMLangeModel(
         context.applicationContext,
         BuildConfig.MELANGE_TOKEN,
-        MODEL_KEY
+        MODEL_KEY,
+        modelMode = ModelMode.RUN_ACCURACY,
     )
 
     /** Returns a flat FloatArray (typically 512-dim for CLIP-ViT-Base-Patch32). */

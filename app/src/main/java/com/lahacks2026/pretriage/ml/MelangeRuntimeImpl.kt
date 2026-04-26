@@ -8,6 +8,8 @@ import com.lahacks2026.pretriage.data.RecommendedAction
 import com.lahacks2026.pretriage.data.SeverityLevel
 import com.lahacks2026.pretriage.data.TriageDecision
 import com.lahacks2026.pretriage.data.TriageRequest
+import com.lahacks2026.pretriage.ml.clip.ClipImageEncoder
+import com.lahacks2026.pretriage.ml.clip.ClipLabelClassifier
 import com.zeticai.mlange.core.model.llm.LLMQuantType
 import com.zeticai.mlange.core.model.llm.LLMTarget
 import com.zeticai.mlange.core.model.llm.ZeticMLangeLLMModel
@@ -20,9 +22,17 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 private const val TAG = "MelangeRuntime"
-private const val MODEL_ID = "google/medgemma-1.5-4b-it"
-private const val MAX_OUTPUT_TOKENS = 150
-private const val PROMPT_PREFILL_TAIL = "VERDICT: "
+private const val MODEL_ID = "Steve/Qwen3.5-2B"
+// Hard cap on generated tokens. With RESULT-first flip, a complete answer is
+// usually ~60 tokens (tier name + one sentence of reasoning). 160 leaves
+// headroom for slightly verbose models without burning budget on rambling.
+private const val MAX_OUTPUT_TOKENS = 160
+// Prefill the assistant turn with the start of the RESULT line, so the
+// model's very first generated token must be a tier name. Reasoning comes
+// after, capped naturally by token budget. Old format had REASONING first,
+// which let the model use the entire token budget on prose and never reach
+// the verdict — observed on-device cut-off mid-sentence.
+private const val PROMPT_PREFILL_TAIL = "RESULT: "
 
 class MelangeRuntimeImpl(
     private val context: Context
@@ -34,21 +44,90 @@ class MelangeRuntimeImpl(
     @Volatile
     private var model: ZeticMLangeLLMModel? = null
 
+    // Cached CLIP encoder. Construction calls ZeticMLangeModel(...) which hits
+    // Zetic's catalog/auth endpoints — doing that per-triage burns quota before
+    // the LLM even runs. Build once, reuse across calls.
+    @Volatile
+    private var clipEncoder: ClipImageEncoder? = null
+    private val clipMutex = Mutex()
+
+    // Cached label classifier — loads ~12 categories × ~3 phrasings worth of
+    // 512-dim CLIP text embeddings from assets/clip_labels.json. Pure Kotlin,
+    // no network or quota hit.
+    @Volatile
+    private var labelClassifier: ClipLabelClassifier? = null
+
+    // Warmup runs at most once per process. We cache the Result of the first
+    // attempt — success or failure — and every subsequent call returns it
+    // without touching the Zetic SDK again. This prevents recomposition,
+    // navigation, or post-failure UI retries from burning a quota slot per
+    // re-entry. Explicit user retry would need to instantiate a fresh runtime.
+    @Volatile
+    private var warmupResult: Result<Unit>? = null
+    private val warmupMutex = Mutex()
+
     private val initMutex = Mutex()
     private val runMutex = Mutex()
 
-    override suspend fun warmUp(onProgress: (Float) -> Unit): Result<Unit> = runCatching {
-        if (BuildConfig.MELANGE_TOKEN.isBlank()) {
-            error("MELANGE_TOKEN missing in local.properties")
+    override suspend fun warmUp(onProgress: (Float) -> Unit): Result<Unit> {
+        warmupResult?.let { return it }
+        return warmupMutex.withLock {
+            warmupResult ?: runCatching {
+                if (BuildConfig.MELANGE_TOKEN.isBlank()) {
+                    error("MELANGE_TOKEN missing in local.properties")
+                }
+                ensureModel(onProgress)
+                _isReady.value = true
+                Log.i(TAG, "warmUp complete")
+            }.also { warmupResult = it }
         }
-        ensureModel(onProgress)
-        _isReady.value = true
-        Log.i(TAG, "warmUp complete")
     }
 
     override suspend fun triage(req: TriageRequest): Result<TriageDecision> = runCatching {
+        // Fast-fail if warmup has already failed — don't retry constructor and
+        // burn another quota slot. UI gets a clear error to surface.
+        warmupResult?.exceptionOrNull()?.let {
+            error("triage skipped — warmup failed: ${it.message}")
+        }
         ensureModel { }
-        val prompt = buildPrompt(req)
+
+        // CLIP zero-shot classification: encode the image, score it against
+        // precomputed label embeddings (assets/clip_labels.json), and pick the
+        // top medical-finding category. The category name is injected into
+        // the LLM prompt as a grounded "Visual finding: …" line so Qwen
+        // reasons about what's actually in the image rather than hallucinating
+        // about whether one exists. The "junk" category catches blurry /
+        // off-topic photos and suppresses the visual-finding line entirely.
+        // Wrapped in runCatching so a CLIP load failure can't break text
+        // triage.
+        var visualFinding: String? = null
+        req.image?.let { bitmap ->
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val encoder = ensureClipEncoder()
+                    val classifier = ensureLabelClassifier()
+                    val emb = encoder.encode(bitmap)
+                    val ranked = classifier.classify(emb)
+                    val top = ranked.first()
+                    Log.i(
+                        TAG,
+                        "CLIP top-3: " + ranked.take(3).joinToString {
+                            "${it.category}=${"%.2f".format(it.score)}"
+                        }
+                    )
+                    visualFinding = when {
+                        top.category == ClipLabelClassifier.JUNK_CATEGORY ->
+                            "image was unclear or off-topic; visual analysis skipped"
+                        top.score < ClipLabelClassifier.MIN_CONFIDENCE ->
+                            "image too unclear for confident visual analysis (top guess: ${top.category}, ${"%.2f".format(top.score)})"
+                        else ->
+                            "${top.category} (visual confidence ${"%.2f".format(top.score)})"
+                    }
+                }
+            }.onFailure { Log.w(TAG, "CLIP classify failed; ignoring", it) }
+        }
+
+        val prompt = buildPrompt(req, visualFinding)
         val started = System.currentTimeMillis()
 
         val raw = runMutex.withLock {
@@ -58,14 +137,35 @@ class MelangeRuntimeImpl(
                 m.run(prompt)
                 val sb = StringBuilder(PROMPT_PREFILL_TAIL)
                 var count = 0
+                // Once REASONING starts, we already have the tier (the
+                // load-bearing field). Allow up to reasoningBudget more
+                // tokens for the explanation, then stop cleanly at the
+                // next sentence boundary or hard cap. Prevents mid-word
+                // cut-off without burning the full 160-token budget on
+                // verbose models.
+                var reasoningStartedAt = -1
+                val reasoningBudget = 80
                 while (count < MAX_OUTPUT_TOKENS) {
                     val r = m.waitForNextToken()
                     if (r.generatedTokens == 0) break
                     sb.append(r.token)
                     count++
-                    
-                    // Stop as soon as we have a verdict and a period
-                    if (count > 15 && (sb.endsWith(".") || sb.endsWith(".\n") || sb.contains("###"))) break
+
+                    // Detect a new few-shot block boundary - model spilled
+                    // into pretending to start a new example. Stop.
+                    if (sb.endsWith("\n###") || sb.endsWith("\n\n###")) break
+
+                    if (reasoningStartedAt < 0 && sb.contains("REASONING:")) {
+                        reasoningStartedAt = count
+                    }
+                    if (reasoningStartedAt > 0) {
+                        val sinceReasoning = count - reasoningStartedAt
+                        if (sinceReasoning >= reasoningBudget) break
+                        // Soft stop: end on a sentence terminator after at
+                        // least 20 reasoning tokens, so we don't truncate
+                        // mid-sentence.
+                        if (sinceReasoning >= 20 && (sb.endsWith(".\n") || sb.endsWith(". ") || sb.endsWith("."))) break
+                    }
                 }
                 Log.i(TAG, "triage gen: tokens=$count durMs=${System.currentTimeMillis() - started}")
                 sb.toString()
@@ -73,7 +173,7 @@ class MelangeRuntimeImpl(
         }
 
         Log.d(TAG, "raw output:\n$raw")
-        parseFormattedResponse(raw)
+        parseRawResponse(raw, visualFinding)
     }
 
     override suspend fun transcribe(audioPath: String): Result<String> =
@@ -107,45 +207,78 @@ class MelangeRuntimeImpl(
         }
     }
 
-    private fun buildPrompt(req: TriageRequest): String = buildString {
-        append("RECORD_START\n")
-        append("CASE_01: { INPUT: \"Minor cut\", VERDICT: SELF_CARE, REASON: No infection signs. }\n")
-        append("CASE_02: { INPUT: \"Chest pain\", VERDICT: EMERGENCY, REASON: Critical symptom. }\n")
-        
-        val transcript = req.transcript.trim().ifBlank { "N/A" }
-        val scan = if (req.image != null) "Vision scan: Positive for acute inflammation/injury." else "Vision scan: N/A."
-        
-        append("CASE_CURRENT: { INPUT: \"$transcript\", $scan, ")
+    private fun buildPrompt(req: TriageRequest, visualFinding: String?): String = buildString {
+        // /no_think disables Qwen3.5's default chain-of-thought emission.
+        // Without it the model spends the entire token budget on a "Thinking
+        // Process: ..." block and never reaches RESULT/REASONING.
+        append("/no_think\n")
+        append("Instructions: Analyze user symptoms to determine a care tier.\n")
+        append("Tiers: SELF_CARE, TELEHEALTH, URGENT_CARE, EMERGENCY.\n")
+        append("If a 'Visual finding' line is present, treat it as a fact about the user's photo and reason about it.\n")
+        append("Do not show your reasoning steps. Write RESULT first (one tier on its own line), then a single short REASONING sentence.\n\n")
+
+        append("###\nUser: \"I cut my hand.\"\nVisual finding: deep cut needing stitches (visual confidence 0.31)\nRESULT: URGENT_CARE\nREASONING: A deep cut needs stitches today.\n\n")
+
+        append("###\nUser: \"")
+        val transcript = req.transcript.trim()
+        if (transcript.isEmpty()) append("Hi.")
+        else append(transcript)
+        append("\"\n")
+
+        if (visualFinding != null) {
+            append("Visual finding: ")
+            append(visualFinding)
+            append("\n")
+        }
         append(PROMPT_PREFILL_TAIL)
     }
 
-    private fun parseFormattedResponse(raw: String): TriageDecision {
+    private suspend fun ensureClipEncoder(): ClipImageEncoder {
+        clipEncoder?.let { return it }
+        return clipMutex.withLock {
+            clipEncoder ?: ClipImageEncoder(context).also { clipEncoder = it }
+        }
+    }
+
+    private fun ensureLabelClassifier(): ClipLabelClassifier =
+        labelClassifier ?: synchronized(this) {
+            labelClassifier ?: ClipLabelClassifier(context).also { labelClassifier = it }
+        }
+
+    private fun parseRawResponse(raw: String, visualFinding: String?): TriageDecision {
         val upper = raw.uppercase()
         
-        // Find the word immediately after our prefill
-        val verdictSection = raw.substringAfter("VERDICT:").substringBefore(",").uppercase()
-        
+        // Find the RESULT which should now be AFTER the reasoning
         val severity = when {
-            "EMERGENCY" in verdictSection -> SeverityLevel.EMERGENCY
-            "URGENT_CARE" in verdictSection -> SeverityLevel.URGENT_CARE
-            "TELEHEALTH" in verdictSection -> SeverityLevel.TELEHEALTH
-            "SELF_CARE" in verdictSection -> SeverityLevel.SELF_CARE
-            // Deep scan fallback if the model messed up the comma
+            "RESULT: EMERGENCY" in upper -> SeverityLevel.EMERGENCY
+            "RESULT: URGENT_CARE" in upper -> SeverityLevel.URGENT_CARE
+            "RESULT: TELEHEALTH" in upper -> SeverityLevel.TELEHEALTH
+            "RESULT: SELF_CARE" in upper -> SeverityLevel.SELF_CARE
+            // Fallback for safety if it missed the tag but has the word
             "EMERGENCY" in upper -> SeverityLevel.EMERGENCY
             "URGENT_CARE" in upper -> SeverityLevel.URGENT_CARE
             "TELEHEALTH" in upper -> SeverityLevel.TELEHEALTH
             else -> SeverityLevel.SELF_CARE
         }
 
-        val reasoning = raw.substringAfter("REASON:", "")
-            .substringBefore("}")
-            .substringBefore("\n")
+        val explicit = raw.substringAfter("REASONING:", "")
+            .substringBefore("RESULT:")
             .trim()
-            .ifBlank { "Assessment based on clinical indicators." }
+        val modelText = explicit.ifBlank {
+            // No REASONING: tag emitted (likely token-cap mid-generation).
+            // Surface what the model actually said instead of a generic
+            // placeholder — strip the prefilled "RESULT: <TIER>" line so the
+            // user sees the prose only.
+            raw.substringAfter("\n", raw)
+                .trim()
+                .ifBlank { "Routing based on analysis." }
+        }
+        val reasoning = if (visualFinding.isNullOrBlank()) modelText
+        else "$modelText\n\nVisual finding: $visualFinding"
 
         return TriageDecision(
             severity = severity,
-            reasoning = if (reasoning.endsWith(".")) reasoning else "$reasoning.",
+            reasoning = reasoning,
             redFlags = emptyList(),
             recommendedAction = RecommendedAction(
                 provider = when(severity) {
