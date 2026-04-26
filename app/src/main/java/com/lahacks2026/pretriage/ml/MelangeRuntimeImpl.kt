@@ -9,6 +9,7 @@ import com.lahacks2026.pretriage.data.SeverityLevel
 import com.lahacks2026.pretriage.data.TriageDecision
 import com.lahacks2026.pretriage.data.TriageRequest
 import com.lahacks2026.pretriage.ml.clip.ClipImageEncoder
+import com.lahacks2026.pretriage.ml.clip.ClipLabelClassifier
 import com.zeticai.mlange.core.model.llm.LLMQuantType
 import com.zeticai.mlange.core.model.llm.LLMTarget
 import com.zeticai.mlange.core.model.llm.ZeticMLangeLLMModel
@@ -43,40 +44,90 @@ class MelangeRuntimeImpl(
     @Volatile
     private var model: ZeticMLangeLLMModel? = null
 
+    // Cached CLIP encoder. Construction calls ZeticMLangeModel(...) which hits
+    // Zetic's catalog/auth endpoints — doing that per-triage burns quota before
+    // the LLM even runs. Build once, reuse across calls.
+    @Volatile
+    private var clipEncoder: ClipImageEncoder? = null
+    private val clipMutex = Mutex()
+
+    // Cached label classifier — loads ~12 categories × ~3 phrasings worth of
+    // 512-dim CLIP text embeddings from assets/clip_labels.json. Pure Kotlin,
+    // no network or quota hit.
+    @Volatile
+    private var labelClassifier: ClipLabelClassifier? = null
+
+    // Warmup runs at most once per process. We cache the Result of the first
+    // attempt — success or failure — and every subsequent call returns it
+    // without touching the Zetic SDK again. This prevents recomposition,
+    // navigation, or post-failure UI retries from burning a quota slot per
+    // re-entry. Explicit user retry would need to instantiate a fresh runtime.
+    @Volatile
+    private var warmupResult: Result<Unit>? = null
+    private val warmupMutex = Mutex()
+
     private val initMutex = Mutex()
     private val runMutex = Mutex()
 
-    override suspend fun warmUp(onProgress: (Float) -> Unit): Result<Unit> = runCatching {
-        if (BuildConfig.MELANGE_TOKEN.isBlank()) {
-            error("MELANGE_TOKEN missing in local.properties")
+    override suspend fun warmUp(onProgress: (Float) -> Unit): Result<Unit> {
+        warmupResult?.let { return it }
+        return warmupMutex.withLock {
+            warmupResult ?: runCatching {
+                if (BuildConfig.MELANGE_TOKEN.isBlank()) {
+                    error("MELANGE_TOKEN missing in local.properties")
+                }
+                ensureModel(onProgress)
+                _isReady.value = true
+                Log.i(TAG, "warmUp complete")
+            }.also { warmupResult = it }
         }
-        ensureModel(onProgress)
-        _isReady.value = true
-        Log.i(TAG, "warmUp complete")
     }
 
     override suspend fun triage(req: TriageRequest): Result<TriageDecision> = runCatching {
+        // Fast-fail if warmup has already failed — don't retry constructor and
+        // burn another quota slot. UI gets a clear error to surface.
+        warmupResult?.exceptionOrNull()?.let {
+            error("triage skipped — warmup failed: ${it.message}")
+        }
         ensureModel { }
 
-        // Probe push: if a photo is attached, run CLIP image encoder and log
-        // the embedding shape + L2 norm. We don't yet feed the result into
-        // the prompt - the next push adds zero-shot classification with
-        // cached label embeddings. Wrapped in runCatching so a CLIP load
-        // failure or shape mismatch can't break the working text triage.
+        // CLIP zero-shot classification: encode the image, score it against
+        // precomputed label embeddings (assets/clip_labels.json), and pick the
+        // top medical-finding category. The category name is injected into
+        // the LLM prompt as a grounded "Visual finding: …" line so Qwen
+        // reasons about what's actually in the image rather than hallucinating
+        // about whether one exists. The "junk" category catches blurry /
+        // off-topic photos and suppresses the visual-finding line entirely.
+        // Wrapped in runCatching so a CLIP load failure can't break text
+        // triage.
+        var visualFinding: String? = null
         req.image?.let { bitmap ->
             runCatching {
                 withContext(Dispatchers.IO) {
-                    val encoder = ClipImageEncoder(context)
-                    try {
-                        encoder.encode(bitmap)
-                    } finally {
-                        encoder.close()
+                    val encoder = ensureClipEncoder()
+                    val classifier = ensureLabelClassifier()
+                    val emb = encoder.encode(bitmap)
+                    val ranked = classifier.classify(emb)
+                    val top = ranked.first()
+                    Log.i(
+                        TAG,
+                        "CLIP top-3: " + ranked.take(3).joinToString {
+                            "${it.category}=${"%.2f".format(it.score)}"
+                        }
+                    )
+                    visualFinding = when {
+                        top.category == ClipLabelClassifier.JUNK_CATEGORY ->
+                            "image was unclear or off-topic; visual analysis skipped"
+                        top.score < ClipLabelClassifier.MIN_CONFIDENCE ->
+                            "image too unclear for confident visual analysis (top guess: ${top.category}, ${"%.2f".format(top.score)})"
+                        else ->
+                            "${top.category} (visual confidence ${"%.2f".format(top.score)})"
                     }
                 }
-            }.onFailure { Log.w(TAG, "CLIP probe failed; ignoring", it) }
+            }.onFailure { Log.w(TAG, "CLIP classify failed; ignoring", it) }
         }
 
-        val prompt = buildPrompt(req)
+        val prompt = buildPrompt(req, visualFinding)
         val started = System.currentTimeMillis()
 
         val raw = runMutex.withLock {
@@ -122,7 +173,7 @@ class MelangeRuntimeImpl(
         }
 
         Log.d(TAG, "raw output:\n$raw")
-        parseRawResponse(raw)
+        parseRawResponse(raw, visualFinding)
     }
 
     override suspend fun transcribe(audioPath: String): Result<String> =
@@ -156,12 +207,17 @@ class MelangeRuntimeImpl(
         }
     }
 
-    private fun buildPrompt(req: TriageRequest): String = buildString {
-        append("Instructions: Analyze user symptoms (and photos when present) to determine a care tier.\n")
+    private fun buildPrompt(req: TriageRequest, visualFinding: String?): String = buildString {
+        // /no_think disables Qwen3.5's default chain-of-thought emission.
+        // Without it the model spends the entire token budget on a "Thinking
+        // Process: ..." block and never reaches RESULT/REASONING.
+        append("/no_think\n")
+        append("Instructions: Analyze user symptoms to determine a care tier.\n")
         append("Tiers: SELF_CARE, TELEHEALTH, URGENT_CARE, EMERGENCY.\n")
-        append("Always write RESULT first (one tier on its own line), then REASONING.\n\n")
+        append("If a 'Visual finding' line is present, treat it as a fact about the user's photo and reason about it.\n")
+        append("Do not show your reasoning steps. Write RESULT first (one tier on its own line), then a single short REASONING sentence.\n\n")
 
-        append("###\nUser: \"I have a cut.\"\nImage: (User attached photo)\nRESULT: URGENT_CARE\nREASONING: Photo shows depth needing stitches.\n\n")
+        append("###\nUser: \"I cut my hand.\"\nVisual finding: deep cut needing stitches (visual confidence 0.31)\nRESULT: URGENT_CARE\nREASONING: A deep cut needs stitches today.\n\n")
 
         append("###\nUser: \"")
         val transcript = req.transcript.trim()
@@ -169,13 +225,27 @@ class MelangeRuntimeImpl(
         else append(transcript)
         append("\"\n")
 
-        if (req.image != null) {
-            append("Image: (User provided a photo for visual analysis)\n")
+        if (visualFinding != null) {
+            append("Visual finding: ")
+            append(visualFinding)
+            append("\n")
         }
         append(PROMPT_PREFILL_TAIL)
     }
 
-    private fun parseRawResponse(raw: String): TriageDecision {
+    private suspend fun ensureClipEncoder(): ClipImageEncoder {
+        clipEncoder?.let { return it }
+        return clipMutex.withLock {
+            clipEncoder ?: ClipImageEncoder(context).also { clipEncoder = it }
+        }
+    }
+
+    private fun ensureLabelClassifier(): ClipLabelClassifier =
+        labelClassifier ?: synchronized(this) {
+            labelClassifier ?: ClipLabelClassifier(context).also { labelClassifier = it }
+        }
+
+    private fun parseRawResponse(raw: String, visualFinding: String?): TriageDecision {
         val upper = raw.uppercase()
         
         // Find the RESULT which should now be AFTER the reasoning
@@ -191,10 +261,20 @@ class MelangeRuntimeImpl(
             else -> SeverityLevel.SELF_CARE
         }
 
-        val reasoning = raw.substringAfter("REASONING:", "")
+        val explicit = raw.substringAfter("REASONING:", "")
             .substringBefore("RESULT:")
             .trim()
-            .ifBlank { "Routing based on analysis." }
+        val modelText = explicit.ifBlank {
+            // No REASONING: tag emitted (likely token-cap mid-generation).
+            // Surface what the model actually said instead of a generic
+            // placeholder — strip the prefilled "RESULT: <TIER>" line so the
+            // user sees the prose only.
+            raw.substringAfter("\n", raw)
+                .trim()
+                .ifBlank { "Routing based on analysis." }
+        }
+        val reasoning = if (visualFinding.isNullOrBlank()) modelText
+        else "$modelText\n\nVisual finding: $visualFinding"
 
         return TriageDecision(
             severity = severity,
