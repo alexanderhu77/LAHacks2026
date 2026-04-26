@@ -45,7 +45,7 @@ import com.lahacks2026.pretriage.ui.theme.NoraTheme
 private data class StepRow(val step: WarmupStep, val name: String, val detail: String)
 
 private val SPLASH_STEPS = listOf(
-    StepRow(WarmupStep.Triage, "Loading nurse model", "Qwen3.5 · 2B"),
+    StepRow(WarmupStep.Triage, "Loading nurse model", "MedGemma · 4B"),
     StepRow(WarmupStep.Voice, "Loading voice model", "Whisper · tiny"),
     StepRow(WarmupStep.Privacy, "Loading privacy filter", "tanaos anonymizer"),
 )
