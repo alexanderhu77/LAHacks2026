@@ -26,6 +26,8 @@ data class WarmupState(
     val completed: Set<WarmupStep> = emptySet(),
     val failed: Set<WarmupStep> = emptySet(),
     val active: WarmupStep? = WarmupStep.Triage,
+    /** 0.0..1.0 download progress for the active Triage step's model fetch. */
+    val triageProgress: Float = 0f,
 ) {
     val allDone: Boolean get() = (completed + failed).size == WarmupStep.values().size
 }
@@ -78,7 +80,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             advance(WarmupStep.Triage)
             val res = withContext(Dispatchers.IO) {
-                runCatching { RuntimeProvider.runtime.warmUp { } }
+                runCatching {
+                    RuntimeProvider.runtime.warmUp { p ->
+                        _state.update { s -> s.copy(warmup = s.warmup.copy(triageProgress = p)) }
+                    }
+                }
             }
             // Treat any failure as a fallback signal but don't block.
             res.onFailure { markFailed(WarmupStep.Triage) }

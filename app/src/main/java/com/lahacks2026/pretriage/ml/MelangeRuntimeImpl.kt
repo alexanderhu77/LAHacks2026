@@ -23,7 +23,7 @@ import kotlinx.coroutines.withContext
 
 private const val TAG = "MelangeRuntime"
 private const val MODEL_ID = "Steve/Qwen3.5-2B"
-private const val MAX_OUTPUT_TOKENS = 384
+private const val MAX_OUTPUT_TOKENS = 220
 
 class MelangeRuntimeImpl(
     private val context: Context
@@ -69,7 +69,10 @@ class MelangeRuntimeImpl(
             val m = model ?: error("model null")
             withContext(Dispatchers.IO) {
                 m.run(prompt)
-                val sb = StringBuilder()
+                // Prompt ends with "{" so the model continues from inside an open
+                // JSON object. Seed the buffer with "{" so depth-counting + parser
+                // see a well-formed object.
+                val sb = StringBuilder("{")
                 var count = 0
                 while (count < MAX_OUTPUT_TOKENS) {
                     val r = m.waitForNextToken()
@@ -121,9 +124,16 @@ class MelangeRuntimeImpl(
 
     private fun buildPrompt(req: TriageRequest): String = buildString {
         append(Prompts.MEDGEMMA_SYSTEM_PROMPT.trim())
-        append("\n\nPatient transcript:\n")
+        append("\n\nPatient transcript: \"")
         append(req.transcript.ifBlank { "(no transcript)" })
-        append("\n\nReturn the JSON object only:\n")
+        append("\"\n\n")
+        append("CRITICAL: Do not think out loud. Do not explain. Do not write any prose. ")
+        append("Output ONLY the JSON object — your very next character must continue a JSON object body. ")
+        append("Begin now:\n\n")
+        // Prefill the opening brace. The model is forced to continue a JSON
+        // object instead of writing chain-of-thought prose. Seeded into the
+        // output buffer in triage() so the parser sees a complete object.
+        append("{")
     }
 
     private fun looksLikeCompletedJson(sb: StringBuilder): Boolean {

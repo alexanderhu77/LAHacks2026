@@ -45,7 +45,7 @@ import com.lahacks2026.pretriage.ui.theme.NoraTheme
 private data class StepRow(val step: WarmupStep, val name: String, val detail: String)
 
 private val SPLASH_STEPS = listOf(
-    StepRow(WarmupStep.Triage, "Loading nurse model", "MedGemma 1.5 · 4B"),
+    StepRow(WarmupStep.Triage, "Loading nurse model", "Qwen3.5 · 2B"),
     StepRow(WarmupStep.Voice, "Loading voice model", "Whisper · tiny"),
     StepRow(WarmupStep.Privacy, "Loading privacy filter", "tanaos anonymizer"),
 )
@@ -160,6 +160,12 @@ private fun SplashRow(row: StepRow, warmup: WarmupState) {
     val active = warmup.active == row.step && !done
     val pending = !done && !active
 
+    val detailText = if (active && row.step == WarmupStep.Triage && warmup.triageProgress > 0f) {
+        "${row.detail} · ${(warmup.triageProgress * 100).toInt()}%"
+    } else {
+        row.detail
+    }
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -181,7 +187,7 @@ private fun SplashRow(row: StepRow, warmup: WarmupState) {
             style = NoraTheme.typography.label,
         )
         Text(
-            text = row.detail,
+            text = detailText,
             color = c.inkMuted,
             style = NoraTheme.typography.mono,
         )
