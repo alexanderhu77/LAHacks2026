@@ -72,7 +72,7 @@ class MelangeRuntimeImpl(
     override suspend fun warmUp(onProgress: (Float) -> Unit): Result<Unit> {
         warmupResult?.let { return it }
         return warmupMutex.withLock {
-            warmupResult ?: runCatching {
+            warmupResult ?: runCatching <Unit>{
                 if (BuildConfig.MELANGE_TOKEN.isBlank()) {
                     error("MELANGE_TOKEN missing in local.properties")
                 }
