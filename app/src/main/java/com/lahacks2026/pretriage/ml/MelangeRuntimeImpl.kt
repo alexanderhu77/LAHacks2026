@@ -23,7 +23,9 @@ import kotlinx.coroutines.withContext
 
 private const val TAG = "MelangeRuntime"
 private const val MODEL_ID = "Steve/Qwen3.5-2B"
-private const val MAX_OUTPUT_TOKENS = 256
+private const val MAX_OUTPUT_TOKENS = 180
+
+private const val PROMPT_PREFILL_TAIL = "{\"severity\":\""
 
 class MelangeRuntimeImpl(
     private val context: Context
@@ -72,19 +74,19 @@ class MelangeRuntimeImpl(
                 // and the model responds to whatever was in the buffer last.
                 m.cleanUp()
                 m.run(prompt)
-                // BAREBONES DIAGNOSTIC MODE: no JSON prefill, no early-exit
-                // detection. Drain every token Qwen wants to emit and log
-                // it. The parser will fall through to the fallback decision
-                // (that's expected — the goal is to confirm the model itself
-                // can reason coherently about a symptom). Re-introduce JSON
-                // formatting once we trust the model's output content.
-                val sb = StringBuilder()
+                // Prompt ends with the JSON prefill `{"severity":"`. Model has
+                // nowhere to write prose — its next token has to be one of the
+                // four enum values. Seed the buffer with the same prefill so
+                // depth counting + JSON parser see a complete object.
+                val sb = StringBuilder(PROMPT_PREFILL_TAIL)
                 var count = 0
                 while (count < MAX_OUTPUT_TOKENS) {
                     val r = m.waitForNextToken()
                     if (r.generatedTokens == 0) break
                     sb.append(r.token)
                     count++
+                    // Greedy early-exit once we observe a balanced top-level JSON close.
+                    if (count > 12 && looksLikeCompletedJson(sb)) break
                 }
                 Log.i(TAG, "triage gen: tokens=$count durMs=${System.currentTimeMillis() - started}")
                 sb.toString()
@@ -127,15 +129,35 @@ class MelangeRuntimeImpl(
     }
 
     private fun buildPrompt(req: TriageRequest): String = buildString {
-        // BAREBONES DIAGNOSTIC PROMPT: single sentence, completion style.
-        // No system prompt, no examples, no JSON, no severity tiers. Just a
-        // question that forces the model into completion mode. The goal:
-        // verify Qwen3.5-2B can reason about a symptom AT ALL, independent
-        // of any formatting requirements. JSON / few-shot / classifier
-        // structure all come back later once we know the model is sane.
-        append("Patient symptom: \"")
+        // Minimal pattern-matching prompt. Previous attempts wrapped Qwen3
+        // chat tags around an elaborate system prompt with anti-refusal
+        // rules ("Do NOT refuse", "Do NOT say I cannot", "Do NOT think out
+        // loud"). On-device logs proved each of those triggered the
+        // opposite of intended behavior: the model "analyzed the request",
+        // explored the conflict, then dumped reasoning inside our prefilled
+        // string slot.
+        //
+        // Strip all of that. No system prompt. No warnings. Only the four
+        // example shapes (one per severity) + the new transcript + JSON
+        // prefill. The model's job becomes pure pattern continuation: see
+        // four `Symptoms: ... JSON: {...}` pairs, complete the fifth.
+        // With nothing to argue against, there is nothing to ramble about.
+        append("Symptoms: \"My finger is cut and won't stop bleeding.\"\n")
+        append("JSON: {\"severity\":\"URGENT_CARE\",\"reasoning\":\"Bleeding that won't stop needs same-day in-person evaluation.\",\"red_flags\":[\"persistent bleeding\"],\"recommended_action\":{\"provider\":\"Urgent care clinic\",\"intent_hint\":\"MAPS_QUERY_URGENT_CARE\"},\"confidence\":0.85}\n\n")
+
+        append("Symptoms: \"Mild sore throat for two days.\"\n")
+        append("JSON: {\"severity\":\"SELF_CARE\",\"reasoning\":\"Mild sore throats usually resolve at home with rest and fluids.\",\"red_flags\":[],\"recommended_action\":{\"provider\":\"Self-care guidance\",\"intent_hint\":\"SHOW_SELF_CARE_TEXT\"},\"confidence\":0.80}\n\n")
+
+        append("Symptoms: \"Red goopy eye in my five-year-old.\"\n")
+        append("JSON: {\"severity\":\"TELEHEALTH\",\"reasoning\":\"Pink eye is typically treatable via video visit.\",\"red_flags\":[],\"recommended_action\":{\"provider\":\"Pediatric telehealth\",\"intent_hint\":\"OPEN_TELEHEALTH_DEEP_LINK\"},\"confidence\":0.80}\n\n")
+
+        append("Symptoms: \"Crushing chest pain radiating down my left arm.\"\n")
+        append("JSON: {\"severity\":\"EMERGENCY\",\"reasoning\":\"Crushing chest pain with arm radiation is a heart attack red flag.\",\"red_flags\":[\"chest pain\",\"arm radiation\"],\"recommended_action\":{\"provider\":\"911\",\"intent_hint\":\"DIAL_911\"},\"confidence\":0.95}\n\n")
+
+        append("Symptoms: \"")
         append(req.transcript.ifBlank { "(none provided)" })
-        append("\"\n\nThe most appropriate level of care is")
+        append("\"\nJSON: ")
+        append(PROMPT_PREFILL_TAIL)
     }
 
     private fun looksLikeCompletedJson(sb: StringBuilder): Boolean {
