@@ -21,8 +21,16 @@ import kotlinx.coroutines.withContext
 
 private const val TAG = "MelangeRuntime"
 private const val MODEL_ID = "Steve/Qwen3.5-2B"
-private const val MAX_OUTPUT_TOKENS = 350
-private const val PROMPT_PREFILL_TAIL = "REASONING: "
+// Hard cap on generated tokens. With RESULT-first flip, a complete answer is
+// usually ~60 tokens (tier name + one sentence of reasoning). 160 leaves
+// headroom for slightly verbose models without burning budget on rambling.
+private const val MAX_OUTPUT_TOKENS = 160
+// Prefill the assistant turn with the start of the RESULT line, so the
+// model's very first generated token must be a tier name. Reasoning comes
+// after, capped naturally by token budget. Old format had REASONING first,
+// which let the model use the entire token budget on prose and never reach
+// the verdict — observed on-device cut-off mid-sentence.
+private const val PROMPT_PREFILL_TAIL = "RESULT: "
 
 class MelangeRuntimeImpl(
     private val context: Context
@@ -58,13 +66,34 @@ class MelangeRuntimeImpl(
                 m.run(prompt)
                 val sb = StringBuilder(PROMPT_PREFILL_TAIL)
                 var count = 0
+                // Once REASONING starts, we already have the tier (the
+                // load-bearing field). Allow up to reasoningBudget more
+                // tokens for the explanation, then stop cleanly at the
+                // next sentence boundary or hard cap. Prevents mid-word
+                // cut-off without burning the full 160-token budget on
+                // verbose models.
+                var reasoningStartedAt = -1
+                val reasoningBudget = 80
                 while (count < MAX_OUTPUT_TOKENS) {
                     val r = m.waitForNextToken()
                     if (r.generatedTokens == 0) break
                     sb.append(r.token)
                     count++
-                    if (count > 50 && sb.contains("RESULT:")) {
-                        // Continue generating to ensure the final tag is captured
+
+                    // Detect a new few-shot block boundary - model spilled
+                    // into pretending to start a new example. Stop.
+                    if (sb.endsWith("\n###") || sb.endsWith("\n\n###")) break
+
+                    if (reasoningStartedAt < 0 && sb.contains("REASONING:")) {
+                        reasoningStartedAt = count
+                    }
+                    if (reasoningStartedAt > 0) {
+                        val sinceReasoning = count - reasoningStartedAt
+                        if (sinceReasoning >= reasoningBudget) break
+                        // Soft stop: end on a sentence terminator after at
+                        // least 20 reasoning tokens, so we don't truncate
+                        // mid-sentence.
+                        if (sinceReasoning >= 20 && (sb.endsWith(".\n") || sb.endsWith(". ") || sb.endsWith("."))) break
                     }
                 }
                 Log.i(TAG, "triage gen: tokens=$count durMs=${System.currentTimeMillis() - started}")
@@ -108,17 +137,18 @@ class MelangeRuntimeImpl(
     }
 
     private fun buildPrompt(req: TriageRequest): String = buildString {
-        append("Instructions: Analyze user symptoms and photos to determine a care tier.\n")
-        append("Tiers: SELF_CARE, TELEHEALTH, URGENT_CARE, EMERGENCY.\n\n")
-        
-        append("###\nUser: \"I have a cut.\"\nImage: (User attached photo)\nREASONING: Photo shows depth needing stitches.\nRESULT: URGENT_CARE\n\n")
-        
+        append("Instructions: Analyze user symptoms (and photos when present) to determine a care tier.\n")
+        append("Tiers: SELF_CARE, TELEHEALTH, URGENT_CARE, EMERGENCY.\n")
+        append("Always write RESULT first (one tier on its own line), then REASONING.\n\n")
+
+        append("###\nUser: \"I have a cut.\"\nImage: (User attached photo)\nRESULT: URGENT_CARE\nREASONING: Photo shows depth needing stitches.\n\n")
+
         append("###\nUser: \"")
         val transcript = req.transcript.trim()
-        if (transcript.isEmpty()) append("Hi.") 
+        if (transcript.isEmpty()) append("Hi.")
         else append(transcript)
         append("\"\n")
-        
+
         if (req.image != null) {
             append("Image: (User provided a photo for visual analysis)\n")
         }
